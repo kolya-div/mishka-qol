@@ -17,6 +17,7 @@ Hamma joyda ishlaydigan: Ctrl+Alt+Q / H / M / S / K.
 import argparse
 import atexit
 import ctypes
+import math
 import os
 import sys
 import threading
@@ -70,9 +71,13 @@ SWIPE_WINDOW = 0.4             # shu soniya ichida
 SWIPE_COOLDOWN = 1.0
 
 LOST_GRACE = 8                 # qo'l shuncha kadr ko'rinmasa ham oldingi holat saqlanadi
-LEFT_FRAMES = 4
-RIGHT_FRAMES = 5
-DOUBLE_FRAMES = 4
+LEFT_FRAMES = 6                # ishora shuncha kadr ketma-ket ushlansagina bosiladi (tasodifiy bosishga qarshi)
+RIGHT_FRAMES = 8               # o'ng tugma: 3 barmoqqa o'tishda oraliqdagi 2 barmoq bosilib ketmasin
+DOUBLE_FRAMES = 6
+DRAG_FRAMES = 3
+UP_ON = 150                    # barmoq burchagi (gradus) shundan katta bo'lsa 'ochiq'
+UP_OFF = 125                   # shundan kichik bo'lsa 'yopiq' (oraliqda oldingi holat saqlanadi)
+LM_SMOOTH = 0.6                # ishora tanish uchun nuqtalarni silliqlash (1 = silliqlashsiz)
 CLICK_COOLDOWN = 0.4
 
 CAL_FRAMES = 40                # kalibrovkada har burchakda shuncha kadr ushlab turish kerak
@@ -80,8 +85,8 @@ CAL_FRAMES = 40                # kalibrovkada har burchakda shuncha kadr ushlab 
 pyautogui.PAUSE = 0
 pyautogui.FAILSAFE = False
 
-TIP = {"index": 8, "middle": 12, "ring": 16, "pinky": 20}
-PIP = {"index": 6, "middle": 10, "ring": 14, "pinky": 18}
+# har barmoq bo'g'imlari: (asosi MCP, PIP, DIP, uchi)
+FINGER = {"index": (5, 6, 7, 8), "middle": (9, 10, 11, 12), "ring": (13, 14, 15, 16), "pinky": (17, 18, 19, 20)}
 
 CONNECTIONS = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
                (5, 9), (9, 10), (10, 11), (11, 12), (9, 13), (13, 14), (14, 15),
@@ -260,13 +265,44 @@ class Hotkeys:
 
 
 # ---------------------------------------------------------------- imo-ishoralar
+class Pt:
+    """Tekislashtirilgan (silliqlangan) nuqta."""
+    __slots__ = ("x", "y", "z")
+
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+
+
 def dist(a, b):
-    return ((a.x - b.x) ** 2 + (a.y - b.y) ** 2) ** 0.5
+    return ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (getattr(a, "z", 0.0) - getattr(b, "z", 0.0)) ** 2) ** 0.5
 
 
-def finger_up(lm, name):
-    wrist = lm[0]
-    return dist(lm[TIP[name]], wrist) > dist(lm[PIP[name]], wrist) * 1.15
+def angle(a, b, c):
+    """b nuqtadagi burchak (gradus): 180 = to'g'ri, kichik = bukilgan."""
+    v1 = (a.x - b.x, a.y - b.y, getattr(a, "z", 0.0) - getattr(b, "z", 0.0))
+    v2 = (c.x - b.x, c.y - b.y, getattr(c, "z", 0.0) - getattr(b, "z", 0.0))
+    n1 = (v1[0] ** 2 + v1[1] ** 2 + v1[2] ** 2) ** 0.5
+    n2 = (v2[0] ** 2 + v2[1] ** 2 + v2[2] ** 2) ** 0.5
+    if n1 < 1e-9 or n2 < 1e-9:
+        return 180.0
+    cos = (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (n1 * n2)
+    return math.degrees(math.acos(max(-1.0, min(1.0, cos))))
+
+
+def finger_score(lm, name):
+    """Barmoq to'g'riligi: bo'g'imlardagi burchaklar o'rtachasi (180 = to'liq cho'zilgan)."""
+    mcp, pip, dip, tip = FINGER[name]
+    return 0.6 * angle(lm[mcp], lm[pip], lm[dip]) + 0.4 * angle(lm[pip], lm[dip], lm[tip])
+
+
+def finger_up(lm, name, was_up=None):
+    """Gisterezis bilan: oraliq burchakda oldingi holat saqlanadi (ishora "titrab" qolmaydi)."""
+    s = finger_score(lm, name)
+    if s >= UP_ON:
+        return True
+    if s <= UP_OFF:
+        return False
+    return bool(was_up) if was_up is not None else s >= (UP_ON + UP_OFF) / 2
 
 
 def thumb_out(lm):
@@ -274,9 +310,12 @@ def thumb_out(lm):
     return dist(lm[4], lm[5]) / size > THUMB_OUT
 
 
-def classify(lm, pinching):
-    """-> (gesture, pinching). gesture: drag / fist / scroll / left / double / right / move / none"""
-    up = {n: finger_up(lm, n) for n in TIP}
+def classify(lm, pinching, fs=None):
+    """-> (gesture, pinching). gesture: drag / fist / scroll / left / double / right / move / none
+    fs - barmoqlarning oldingi holati (gisterezis uchun, o'zgartiriladi)."""
+    fs = fs if fs is not None else {}
+    up = {n: finger_up(lm, n, fs.get(n)) for n in FINGER}
+    fs.update(up)
     count = sum(up.values())
     size = max(dist(lm[0], lm[9]), 1e-6)
     ratio = dist(lm[4], lm[8]) / size             # bosh va ko'rsatkich uchlari orasi
@@ -356,6 +395,8 @@ class Controller:
     def reset(self):
         self.release()
         self.pinching = False
+        self.fs = {}
+        self.smooth = None
         self.candidate, self.streak, self.confirmed = "none", 0, "none"
         self.scroll_y = None
         self.scroll_acc = 0.0
@@ -398,11 +439,23 @@ class Controller:
         return self.confirmed if self.enabled else "off"
 
     # ----- asosiy yangilanish
-    def update(self, lm, now=None):
+    def _smooth_lm(self, src):
+        """Ishora tanish uchun nuqtalarni vaqt bo'yicha silliqlaydi (titrashdan kelib chiqadigan xatolarni kamaytiradi)."""
+        pts = [(p.x, p.y, getattr(p, 'z', 0.0)) for p in src]
+        if self.smooth is None:
+            self.smooth = pts
+        else:
+            a = LM_SMOOTH
+            self.smooth = [(a * x + (1 - a) * ox, a * y + (1 - a) * oy, a * z + (1 - a) * oz)
+                           for (x, y, z), (ox, oy, oz) in zip(pts, self.smooth)]
+        return [Pt(*t) for t in self.smooth]
+
+    def update(self, lm, now=None, world=None):
+        """lm - kadrdagi nuqtalar (kursor uchun), world - haqiqiy 3D nuqtalar (ishora tanish uchun, bo'lsa)."""
         now = time.time() if now is None else now
         self.lost = 0
         self.last_seen = now
-        gesture, self.pinching = classify(lm, self.pinching)
+        gesture, self.pinching = classify(self._smooth_lm(world or lm), self.pinching, self.fs)
 
         if not self.enabled:
             self._enable_check(lm, gesture, now)
@@ -414,7 +467,7 @@ class Controller:
             self.candidate, self.streak = gesture, 1
 
         need = {"move": 1, "left": LEFT_FRAMES, "right": RIGHT_FRAMES, "double": DOUBLE_FRAMES,
-                "scroll": SCROLL_FRAMES}.get(self.candidate, 2)
+                "drag": DRAG_FRAMES, "scroll": SCROLL_FRAMES}.get(self.candidate, 2)
         if self.streak >= need:
             prev, self.confirmed = self.confirmed, self.candidate
             self._fist_check(now)
@@ -750,16 +803,18 @@ def main():
             mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts)
 
         hands = result.hand_landmarks
+        worlds = getattr(result, "hand_world_landmarks", None)
         if not hands:                                    # qo'l yo'qoldi -> zaxira usuli
             lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
             lab[:, :, 0] = clahe.apply(lab[:, :, 0])
             boosted = cv2.cvtColor(cv2.cvtColor(lab, cv2.COLOR_LAB2BGR), cv2.COLOR_BGR2RGB)
-            hands = rescue.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=boosted)).hand_landmarks
+            res2 = rescue.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=boosted))
+            hands, worlds = res2.hand_landmarks, getattr(res2, "hand_world_landmarks", None)
 
         cal = state["calib"]
         if hands:
             lm = hands[0]
-            ctrl.update(lm)
+            ctrl.update(lm, world=worlds[0] if worlds else None)
             if cal and cal.feed(lm, ctrl.confirmed):
                 settings.calib = cal.result
                 settings.save()
