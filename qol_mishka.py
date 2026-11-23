@@ -663,6 +663,48 @@ class Calibrator:
 
 
 # ---------------------------------------------------------------- asosiy sikl
+FINGER_STYLE = {   # (rang BGR, nomi, uchi nuqtasi, hamma bo'g'imlari)
+    "thumb": ((0, 165, 255), "Bosh", 4, (1, 2, 3, 4)),
+    "index": ((0, 220, 0), "Korsatkich", 8, (5, 6, 7, 8)),
+    "middle": ((255, 200, 0), "Orta", 12, (9, 10, 11, 12)),
+    "ring": ((255, 0, 200), "Nomsiz", 16, (13, 14, 15, 16)),
+    "pinky": ((0, 220, 255), "Jimjiloq", 20, (17, 18, 19, 20)),
+}
+PALM_LINKS = [(0, 1), (0, 5), (5, 9), (9, 13), (13, 17), (0, 17)]
+
+
+def draw_hand(frame, lm, ctrl, names=True):
+    """Qo'lning hamma 21 nuqtasini, barmoqlarni (rang bilan), ularning ochiq/yopiq holatini va qo'l ramkasini chizadi."""
+    h, w = frame.shape[:2]
+    k = w / 640.0
+    pts = [(int(p.x * w), int(p.y * h)) for p in lm]
+    # qo'l ramkasi
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    pad = int(14 * k)
+    cv2.rectangle(frame, (min(xs) - pad, min(ys) - pad), (max(xs) + pad, max(ys) + pad), (255, 255, 255), 1)
+    # kaft
+    for a, b in PALM_LINKS:
+        cv2.line(frame, pts[a], pts[b], (200, 200, 200), max(1, int(2 * k)))
+    thumb_open = thumb_out(lm)
+    for order, (name, (color, label, tip, joints)) in enumerate(FINGER_STYLE.items()):
+        is_up = thumb_open if name == "thumb" else bool(ctrl.fs.get(name))
+        for a, b in zip(joints, joints[1:]):
+            cv2.line(frame, pts[a], pts[b], color, max(2, int(3 * k)))
+        for j in joints:                                  # har bir bo'g'im
+            cv2.circle(frame, pts[j], max(3, int(4 * k)), (255, 255, 255), -1)
+            cv2.circle(frame, pts[j], max(3, int(4 * k)), color, 1)
+        # uchi: yashil = ochiq, qizil = yopiq
+        cv2.circle(frame, pts[tip], max(5, int(8 * k)), (0, 220, 0) if is_up else (0, 0, 255), -1)
+        if names:
+            text = label + (" +" if is_up else " -")
+            # nomlar bir-birining ustiga tushmasligi uchun har barmoqniki turli balandlikda
+            cv2.putText(frame, text, (pts[tip][0] + int(10 * k), pts[tip][1] - int((10 + 15 * (order % 3)) * k)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45 * k, color, max(1, int(k)))
+    cv2.circle(frame, pts[0], max(4, int(6 * k)), (255, 255, 255), -1)   # bilak
+    # kursorni boshqaradigan nuqta (ko'rsatkich uchi)
+    cv2.drawMarker(frame, pts[8], (255, 255, 255), cv2.MARKER_CROSS, int(26 * k), max(1, int(k)))
+
+
 LABELS = {"move": "1 barmoq: HARAKAT", "right": "2 barmoq: O'NG TUGMA",
           "left": "3 barmoq: CHAP TUGMA", "scroll": "OCHIQ KAFT: SCROLL / yon tomonga siltash",
           "drag": "TEKKIZISH: SUDRASH", "fist": "MUSHT: ushlab turing (o'chirish)...",
@@ -713,7 +755,7 @@ def main():
     ctrl = Controller(*pyautogui.size(), pyautogui.position())
     atexit.register(ctrl.release)        # xato bilan yopilsa ham sichqoncha tugmasi bosilgan holda qolmasin
     hotkeys = Hotkeys()
-    state = {"hidden": args.yashirin, "mini": False, "calib": None, "win": None, "size": None}
+    state = {"hidden": args.yashirin, "mini": False, "calib": None, "win": None, "size": None, "names": True}
 
     def on_settings_change():
         settings.apply(globals())
@@ -768,9 +810,13 @@ def main():
             events.append("settings")
         elif key == ord("k"):
             events.append("calib")
+        elif key == ord("l"):
+            events.append("names")
         for ev in events:
             if ev == "quit":
                 running = False
+            elif ev == "names":
+                state["names"] = not state["names"]
             elif ev == "hide":
                 state["hidden"] = not state["hidden"]
             elif ev == "mini":
@@ -822,9 +868,7 @@ def main():
                 state["calib"], ctrl.paused = None, False
             cal = state["calib"]                   # tugagan bo'lsa chizishda ishlatilmasin
             if not state["hidden"]:
-                pts = [(int(p.x * w), int(p.y * h)) for p in lm]
-                for a, b in CONNECTIONS:
-                    cv2.line(frame, pts[a], pts[b], (0, 200, 0), 2)
+                draw_hand(frame, lm, ctrl, state["names"])
         else:
             ctrl.no_hand()
             if cal:
@@ -870,7 +914,7 @@ def main():
                 cv2.putText(frame, cal.error, (10, int(h * 0.56)), font, 0.55 * k, (0, 0, 255), 2)
 
         cv2.putText(frame, f"barmoqlar: {DEBUG['up']}  tekkizish: {DEBUG['pinch']:.2f}   "
-                           f"q-chiqish h-yashirish m-kichik s-sozlamalar k-kalibrovka (Ctrl+Alt+harf)",
+                           f"q-chiqish h-yashirish m-kichik s-sozlamalar k-kalibrovka l-nomlar (Ctrl+Alt+harf)",
                     (10, h - int(12 * k)), font, 0.42 * k, (255, 255, 255), 1)
         cv2.imshow(WINDOW, frame)
         state["shown"] = True
