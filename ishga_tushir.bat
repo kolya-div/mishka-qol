@@ -27,5 +27,5 @@ if not exist ".venv\.installed" (
     echo ok> ".venv\.installed"
 )
 
-".venv\Scripts\python.exe" qol_mishka.py
+".venv\Scripts\python.exe" qol_mishka.py %*
 if errorlevel 1 pause
