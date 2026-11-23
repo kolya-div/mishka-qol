@@ -45,6 +45,8 @@ Hamma joyda (oyna yashirin bo'lsa ham): `Ctrl+Alt+Q / H / M / S / K`.
 
 `s` (yoki `Ctrl+Alt+S`) bosilsa sozlamalar oynasi ochiladi: scroll tezligi, kursor silliqligi va tezligi, sudrash sezgirligi, avto-o'chish vaqti, yoqish vaqti, oyna kengligi, kamera raqami, tezlashuvli (nisbiy) kursor rejimi, siltash ishorasi va Windows bilan birga yoqilish. O'zgarishlar darrov qo'llanadi va `settings.json` ga saqlanadi (bu fayl GitHub'ga yuklanmaydi).
 
+**Uzoqdan boshqarish.** Qo'l kameradan uzoqlashib kichik ko'rinsa, kursor harakati avtomatik kuchayadi (kadrdagi qo'l o'lchamiga qarab), shuning uchun uzoqdan ham joyingizdan siljimasdan butun ekranga yetasiz. Kamera oynasida "Uzoqdan boshqarish: harakat xN" yoziladi. Sozlamalarda yoqish/o'chirish, eng ko'p kuchaytirish (`far_max`) va "kuchaytirishsiz masofa" sozlanadi. Kalibrovka qilsangiz, dastur o'sha paytdagi masofani eslab qoladi va shu masofada kuchaytirish 1 bo'ladi: uzoqdan o'tirib boshqarmoqchi bo'lsangiz kalibrovkani shu joyda qiling.
+
 **Kalibrovka** (`k`): dastur 4 burchakni ketma-ket ko'rsatadi. 1 barmoq bilan uchini har burchakka (eng chekka qulay joyga) qo'yib ushlab turing. Shundan keyin qo'lingizning qulay maydoni butun ekranga yoyiladi. Sozlamalar oynasidan o'chirish mumkin.
 
 ## Muammolar

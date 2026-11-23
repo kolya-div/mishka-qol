@@ -16,6 +16,8 @@ NUMERIC = [
     ("cursor_smooth", "Kursor silliqligi (kichik = silliqroq)", 0.3, 5.0, 0.1, 1.5, "CURSOR_MIN_CUTOFF"),
     ("cursor_speed", "Kursor javobi (katta = kechikishsiz)", 0.002, 0.05, 0.002, 0.012, "CURSOR_BETA"),
     ("margin", "Chekka o'lik zona (kalibrovkasiz)", 0.0, 0.3, 0.01, 0.07, "MARGIN"),
+    ("far_max", "Uzoqdan boshqarish: eng ko'p kuchaytirish", 1.0, 6.0, 0.5, 3.5, "FAR_MAX"),
+    ("ref_palm", "Kuchaytirishsiz masofa (qo'l o'lchami, kichik = uzoqroq)", 0.08, 0.4, 0.01, 0.22, "REF_PALM"),
     ("pinch", "Sudrash sezgirligi (katta = oson tegadi)", 0.15, 0.5, 0.01, 0.28, "PINCH_ON"),
     ("accel_max", "Tezlashuv kuchi (nisbiy rejimda)", 1.0, 4.0, 0.1, 2.5, "ACCEL_MAX"),
     ("auto_off", "Qo'l ko'rinmasa o'chish (soniya)", 2, 30, 1, 5, "AUTO_OFF_SECONDS"),
@@ -24,6 +26,7 @@ NUMERIC = [
     ("cam_index", "Kamera raqami (qayta ishga tushirish kerak)", 0, 5, 1, 0, "CAM_INDEX"),
 ]
 BOOLEAN = [
+    ("far_mode", "Uzoqdan boshqarish (qo'l kichik ko'rinsa harakat kuchayadi)", True, "FAR_MODE"),
     ("swap_buttons", "2 barmoq = CHAP tugma, 3 barmoq = O'NG tugma (o'chirilsa aksincha)", True, "SWAP_BUTTONS"),
     ("relative", "Tezlashuvli (nisbiy) kursor rejimi", False, "RELATIVE_MODE"),
     ("swipe", "Orqaga/oldinga ishorasi (kaftni yon tomonga siltash)", True, "SWIPE_ENABLED"),
@@ -35,7 +38,7 @@ class Settings:
         self.path = path
         self.values = {k: d for k, _l, _lo, _hi, _s, d, _n in NUMERIC}
         self.values.update({k: d for k, _l, d, _n in BOOLEAN})
-        self.calib = None                # (x0, x1, y0, y1) kadr koordinatalarida yoki None
+        self.calib = None                # (x0, x1, y0, y1[, qo'l o'lchami]) kadr koordinatalarida yoki None
         self.load()
 
     def load(self):
@@ -54,7 +57,7 @@ class Settings:
         for k, _l, d, _n in BOOLEAN:
             self.values[k] = bool(data.get(k, d))
         c = data.get("calib")
-        if isinstance(c, list) and len(c) == 4 and all(isinstance(x, (int, float)) for x in c):
+        if isinstance(c, list) and len(c) in (4, 5) and all(isinstance(x, (int, float)) for x in c):
             self.calib = tuple(float(x) for x in c)
 
     def save(self):
@@ -79,7 +82,9 @@ class Settings:
         for k, _l, _d, name in BOOLEAN:
             ns[name] = self.values[k]
         ns["PINCH_OFF"] = ns["PINCH_ON"] * 1.5
-        ns["CALIB"] = self.calib
+        c = self.calib
+        ns["CALIB"] = tuple(c[:4]) if c else None
+        ns["CALIB_PALM"] = c[4] if c and len(c) == 5 else None
 
 
 # ---------------------------------------------------------------- Windows bilan birga yoqilish

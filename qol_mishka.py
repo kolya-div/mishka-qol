@@ -45,6 +45,11 @@ MINI_W = 360                   # 'm' bosilganda kichik oyna kengligi
 WINDOW = "Qol mishka (q - chiqish)"
 MARGIN = 0.07                  # kadr chetidagi "o'lik zona" (kalibrovka bo'lmasa)
 CALIB = None                   # kalibrovka: (x0, x1, y0, y1) kadr koordinatalarida
+CALIB_PALM = None              # kalibrovka paytidagi qo'l o'lchami (kadr balandligiga nisbatan)
+FAR_MODE = True                # uzoqdan boshqarish: qo'l kichik ko'rinsa harakat kuchayadi
+FAR_MAX = 3.5                  # eng ko'p kuchaytirish
+REF_PALM = 0.22                # shu qo'l o'lchamida kuchaytirish yo'q (~50 sm masofa)
+SIZE_SMOOTH = 0.08             # qo'l o'lchamini silliqlash (kichik = sekin va barqaror)
 
 CURSOR_MIN_CUTOFF = 1.5        # One Euro: kichik = silliqroq
 CURSOR_BETA = 0.012            # One Euro: katta = tez harakatda kechikish kam
@@ -346,6 +351,13 @@ def classify(lm, pinching, fs=None):
     return "none", False
 
 
+def hand_size(lm, aspect):
+    """Qo'lning kadrdagi o'lchami (kadr balandligi birligida): kaft uzunligi va kaft eni bo'yicha."""
+    palm = (((lm[9].x - lm[0].x) * aspect) ** 2 + (lm[9].y - lm[0].y) ** 2) ** 0.5
+    knuckle = (((lm[5].x - lm[17].x) * aspect) ** 2 + (lm[5].y - lm[17].y) ** 2) ** 0.5
+    return max(palm, knuckle * 1.25)   # qo'l burilganda biri kichrayadi - kattasini olamiz
+
+
 class OneEuro:
     """One Euro filtri: sekin harakatda titrashni yo'qotadi, tez harakatda kechikmaydi."""
 
@@ -397,6 +409,9 @@ class Controller:
         self.fist_start, self.fist_progress = None, 0.0
         self.enable_start, self.enable_ok, self.enable_progress = None, 0.0, 0.0
         self.rel_prev = None
+        self.aspect = 16 / 9               # kadr eni / balandligi (asosiy sikl yangilab turadi)
+        self.size_now = None               # qo'lning hozirgi o'lchami
+        self.size_ema = None
         self.reset()
 
     # ----- holatni tozalash
@@ -412,6 +427,7 @@ class Controller:
         self.fist_start, self.fist_progress = None, 0.0
         self.enable_start, self.enable_progress = None, 0.0
         self.rel_prev = None
+        self.size_ema = None
         self.history.clear()
         self.swipe_hist.clear()
 
@@ -463,6 +479,9 @@ class Controller:
         now = time.time() if now is None else now
         self.lost = 0
         self.last_seen = now
+        self.size_now = hand_size(lm, self.aspect)
+        self.size_ema = self.size_now if self.size_ema is None else \
+            self.size_ema + (self.size_now - self.size_ema) * SIZE_SMOOTH
         gesture, self.pinching = classify(self._smooth_lm(world or lm), self.pinching, self.fs)
 
         if not self.enabled:
@@ -536,6 +555,15 @@ class Controller:
         self.last_click = now
 
     # ----- kursor
+    @property
+    def scale(self):
+        """Uzoqdan boshqarish kuchaytirishi: qo'l kichik ko'rinsa (uzoq) > 1, yaqin bo'lsa 1."""
+        if not FAR_MODE or not self.size_ema:
+            return 1.0
+        ref = CALIB_PALM or REF_PALM
+        low = 0.5 if CALIB_PALM else 1.0
+        return min(max(ref / self.size_ema, low), max(FAR_MAX, 1.0))
+
     def _target(self, lm):
         if CALIB:
             x0, x1, y0, y1 = CALIB
@@ -544,6 +572,8 @@ class Controller:
         else:
             nx = (lm[8].x - MARGIN) / (1 - 2 * MARGIN)
             ny = (lm[8].y - MARGIN) / (1 - 2 * MARGIN)
+        s = self.scale                 # markaz atrofida harakatni kuchaytiramiz
+        nx, ny = 0.5 + (nx - 0.5) * s, 0.5 + (ny - 0.5) * s
         nx, ny = min(max(nx, 0), 1), min(max(ny, 0), 1)
         return nx * (self.sw - 1), ny * (self.sh - 1)
 
@@ -627,6 +657,7 @@ class Calibrator:
     def __init__(self):
         self.idx, self.samples, self.points, self.result = 0, [], [], None
         self.error = ""
+        self.sizes, self.all_sizes = [], []
 
     @property
     def progress(self):
@@ -636,10 +667,10 @@ class Calibrator:
     def corner(self):
         return self.CORNERS[min(self.idx, len(self.CORNERS) - 1)]
 
-    def feed(self, lm, gesture):
+    def feed(self, lm, gesture, size=None):
         """Har kadrda chaqiriladi. Tugaganda True qaytaradi (natija self.result da)."""
         if lm is None or gesture != "move":
-            self.samples = []
+            self.samples, self.sizes = [], []
             return False
         pos = (lm[8].x, lm[8].y)
         # oldingi burchakdan qo'l siljib ketmaguncha yangi burchak uchun o'lchamaymiz
@@ -648,14 +679,17 @@ class Calibrator:
             return False
         # barmoq joyidan siljisa, o'lchashni qaytadan boshlaymiz (barqaror turishi kerak)
         if self.samples and ((pos[0] - self.samples[0][0]) ** 2 + (pos[1] - self.samples[0][1]) ** 2) ** 0.5 > 0.06:
-            self.samples = []
+            self.samples, self.sizes = [], []
         self.samples.append(pos)
+        if size:
+            self.sizes.append(size)
         if len(self.samples) < CAL_FRAMES:
             return False
         xs = sorted(s[0] for s in self.samples)
         ys = sorted(s[1] for s in self.samples)
         self.points.append((xs[len(xs) // 2], ys[len(ys) // 2]))     # mediana
-        self.samples = []
+        self.all_sizes += self.sizes
+        self.samples, self.sizes = [], []
         self.idx += 1
         if self.idx < len(self.CORNERS):
             return False
@@ -666,7 +700,8 @@ class Calibrator:
             self.error = "Burchaklar noto'g'ri tanlandi, qayta urinib ko'ring."
             self.idx, self.points = 0, []
             return False
-        self.result = (x0, x1, y0, y1)
+        ss = sorted(self.all_sizes)
+        self.result = (x0, x1, y0, y1) + ((ss[len(ss) // 2],) if ss else ())   # + qo'l o'lchami (masofa)
         return True
 
 
@@ -850,6 +885,7 @@ def main():
             continue
         frame = cv2.flip(frame, 1)
         h, w = frame.shape[:2]
+        ctrl.aspect = w / h
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         ts = max(int((time.time() - t0) * 1000), last_ts + 1)
         last_ts = ts
@@ -869,7 +905,7 @@ def main():
         if hands:
             lm = hands[0]
             ctrl.update(lm, world=worlds[0] if worlds else None)
-            if cal and cal.feed(lm, ctrl.confirmed):
+            if cal and cal.feed(lm, ctrl.confirmed, ctrl.size_now):
                 settings.calib = cal.result
                 settings.save()
                 settings.apply(globals())
@@ -913,6 +949,9 @@ def main():
         else:
             label = LABELS[status]
         cv2.putText(frame, label, (10, int(30 * k)), font, 0.65 * k, color, max(2, int(2 * k)))
+        if FAR_MODE and ctrl.scale > 1.05:
+            cv2.putText(frame, f"Uzoqdan boshqarish: harakat x{ctrl.scale:.1f}", (10, h - int(34 * k)), font,
+                        0.5 * k, (0, 255, 0), max(1, int(k)))
 
         if cal:
             name, cx, cy = cal.corner
