@@ -27,8 +27,10 @@ MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
              "hand_landmarker/float16/1/hand_landmarker.task")
 
 CAM_INDEX = 0
-FRAME_W, FRAME_H = 640, 480
-MARGIN = 0.15            # kadr chetidagi "o'lik zona"
+FRAME_W, FRAME_H = 1280, 720   # kamera o'lchami (kengroq ko'rish maydoni; kamera qo'llamasa o'zi moslashadi)
+PREVIEW_W = 1000               # ekrandagi kamera oynasi kengligi (piksel). Oynani sichqoncha bilan ham kattalashtirsa bo'ladi
+WINDOW = "Qol mishka (q - chiqish)"
+MARGIN = 0.07            # kadr chetidagi "o'lik zona" (kichik = qo'lni kadrning deyarli butun maydonida ishlatsa bo'ladi)
 CURSOR_MIN_CUTOFF = 1.5  # One Euro: kichik = sekin harakatda silliqroq (titrash kam), lekin sekinroq
 CURSOR_BETA = 0.012      # One Euro: katta = tez harakatda kechikish kamroq
 
@@ -397,6 +399,8 @@ def main():
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 
     cam = LatestFrame(CAM_INDEX)
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)           # oyna o'lchamini sichqoncha bilan o'zgartirsa bo'ladi
+    cv2.resizeWindow(WINDOW, PREVIEW_W, int(PREVIEW_W * FRAME_H / FRAME_W))
 
     ctrl = Controller(*pyautogui.size(), pyautogui.position())
     t0 = time.time()
@@ -437,18 +441,20 @@ def main():
         else:
             ctrl.no_hand()
 
+        k = w / 640.0                                        # yozuvlar kadr o'lchamiga qarab kattalashadi
         cv2.rectangle(frame, (int(MARGIN * w), int(MARGIN * h)),
                       (int((1 - MARGIN) * w), int((1 - MARGIN) * h)), (255, 128, 0), 1)
         status = ctrl.status
         if status == "fist" and ctrl.fist_progress > 0:      # mushtni ushlash progressi
-            cv2.rectangle(frame, (10, 40), (10 + int(200 * ctrl.fist_progress), 52), (0, 255, 255), -1)
-            cv2.rectangle(frame, (10, 40), (210, 52), (255, 255, 255), 1)
+            y0, y1, bw = int(42 * k), int(56 * k), int(200 * k)
+            cv2.rectangle(frame, (10, y0), (10 + int(bw * ctrl.fist_progress), y1), (0, 255, 255), -1)
+            cv2.rectangle(frame, (10, y0), (10 + bw, y1), (255, 255, 255), 1)
         color = (0, 0, 255) if status == "off" else (0, 255, 255)
-        cv2.putText(frame, labels[status], (10, 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        cv2.putText(frame, f"barmoqlar: {DEBUG['up']}  tekkizish: {DEBUG['pinch']:.2f}", (10, h - 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.imshow("Qol mishka (q - chiqish)", frame)
+        cv2.putText(frame, labels[status], (10, int(30 * k)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65 * k, color, max(2, int(2 * k)))
+        cv2.putText(frame, f"barmoqlar: {DEBUG['up']}  tekkizish: {DEBUG['pinch']:.2f}", (10, h - int(12 * k)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5 * k, (255, 255, 255), max(1, int(k)))
+        cv2.imshow(WINDOW, frame)
         if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
             break
 
