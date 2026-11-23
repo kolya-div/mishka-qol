@@ -27,6 +27,8 @@ Chiqish: kamera oynasida `q` yoki `Esc`.
 | 2 barmoq (ko'rsatkich + o'rta) | O'ng tugma |
 | 3 barmoq (ko'rsatkich + o'rta + nomsiz) | Chap tugma |
 | Ochiq kaft + qo'lni tepaga/pastga | Scroll |
+| Bosh va ko'rsatkich barmoqni tekkizib ushlash | Sudrash (qo'yib yuborsangiz tashlanadi) |
+| Mushtni 1 soniya ushlash | Dasturni o'chirish / yoqish (o'chiq payti hech narsa bosilmaydi) |
 
 ## Muammolar
 

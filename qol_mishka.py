@@ -5,6 +5,8 @@ Imo-ishoralar:
   2 barmoq (ko'rsatkich + o'rta)         -> O'NG tugma bosiladi
   3 barmoq (ko'rsatkich, o'rta, nomsiz)  -> CHAP tugma bosiladi
   5 barmoq (ochiq kaft) + qo'lni tepaga/pastga siljitish -> SCROLL
+  bosh + ko'rsatkich barmoq tekkizib ushlash -> SUDRASH (qo'yib yuborsangiz tashlanadi)
+  mushtni 1 soniya ushlash                -> dasturni O'CHIRISH / YOQISH
 Chiqish: oynada 'q' yoki Esc.
 """
 import ctypes
@@ -27,16 +29,20 @@ MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
 CAM_INDEX = 0
 FRAME_W, FRAME_H = 640, 480
 MARGIN = 0.15            # kadr chetidagi "o'lik zona"
-MIN_ALPHA = 0.25         # sekin harakatda silliqlash (titrashni yo'qotadi)
-MAX_ALPHA = 1.0          # tez harakatda silliqlash yo'q (qotish yo'q)
-FAST_DIST = 0.08         # ekran kengligining shu qismidan katta siljish "tez" hisoblanadi
+CURSOR_MIN_CUTOFF = 1.5  # One Euro: kichik = sekin harakatda silliqroq (titrash kam), lekin sekinroq
+CURSOR_BETA = 0.012      # One Euro: katta = tez harakatda kechikish kamroq
+
+PINCH_ON = 0.28          # bosh va ko'rsatkich uchlari orasi (kaft o'lchamiga nisbatan) < shu bo'lsa "tegdi" -> sudrash
+PINCH_OFF = 0.42         # > shu bo'lsa "ajraldi" -> qo'yib yuborish
+FIST_MIN_RATIO = 0.45    # mushtda bosh va ko'rsatkich uchlari shundan uzoqroq bo'lishi kerak (sudrashdan farqlash)
+FIST_HOLD = 1.0          # mushtni shuncha soniya ushlab tursangiz dastur yoqiladi/o'chadi
 
 SCROLL_GAIN = 6000       # qo'l siljishi -> scroll tezligi (katta = tezroq)
 SCROLL_SMOOTH = 0.5      # qo'l balandligini silliqlash (1 = silliqlashsiz)
 SCROLL_FRAMES = 2
 WHEEL_NOTCH = 120
 
-LOST_GRACE = 5           # qo'l shuncha kadr ko'rinmasa ham oldingi holat saqlanadi
+LOST_GRACE = 8          # qo'l shuncha kadr ko'rinmasa ham oldingi holat saqlanadi
 LEFT_FRAMES = 4          # chap tugma uchun ishora ushlanishi kerak bo'lgan kadrlar
 RIGHT_FRAMES = 5         # o'ng tugma uchun (3 barmoqqa o'tishda adashmaslik uchun ko'proq)
 CLICK_COOLDOWN = 0.4     # bosishlar orasidagi minimal vaqt (soniya)
@@ -51,7 +57,7 @@ CONNECTIONS = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8),
                (5, 9), (9, 10), (10, 11), (11, 12), (9, 13), (13, 14), (14, 15),
                (15, 16), (13, 17), (17, 18), (18, 19), (19, 20), (0, 17)]
 
-DEBUG = {"gap": 0.0, "up": 0}
+DEBUG = {"pinch": 0.0, "up": 0}
 
 
 # ---------------------------------------------------------------- kamera
@@ -154,6 +160,14 @@ def click(button):
     pyautogui.click(button=button)
 
 
+def mouse_down():
+    pyautogui.mouseDown(button="left")
+
+
+def mouse_up():
+    pyautogui.mouseUp(button="left")
+
+
 # ---------------------------------------------------------------- imo-ishoralar
 def dist(a, b):
     return ((a.x - b.x) ** 2 + (a.y - b.y) ** 2) ** 0.5
@@ -164,11 +178,18 @@ def finger_up(lm, name):
     return dist(lm[TIP[name]], wrist) > dist(lm[PIP[name]], wrist) * 1.15
 
 
-def classify(lm, together):
-    """-> (gesture, together). gesture: move / right / left / scroll / none"""
+def classify(lm, pinching):
+    """-> (gesture, pinching). gesture: drag / fist / move / right / left / scroll / none"""
     up = {n: finger_up(lm, n) for n in TIP}
     count = sum(up.values())
-    DEBUG["up"] = count
+    size = max(dist(lm[0], lm[9]), 1e-6)
+    ratio = dist(lm[4], lm[8]) / size             # bosh va ko'rsatkich uchlari orasi
+    pinching = ratio < (PINCH_OFF if pinching else PINCH_ON)
+    DEBUG["up"], DEBUG["pinch"] = count, ratio
+    if pinching:
+        return "drag", True
+    if count == 0 and ratio > FIST_MIN_RATIO:
+        return "fist", False
     if all(up.values()):                  # 4 ta barmoq (bosh barmoq e'tiborga olinmaydi) = ochiq kaft
         return "scroll", False
     if up["index"] and up["middle"] and up["ring"] and not up["pinky"]:
@@ -180,25 +201,70 @@ def classify(lm, together):
     return "none", False
 
 
+class OneEuro:
+    """One Euro filtri: sekin harakatda titrashni yo'qotadi, tez harakatda kechikmaydi."""
+
+    def __init__(self, min_cutoff, beta, dcutoff=1.0):
+        self.min_cutoff, self.beta, self.dcutoff = min_cutoff, beta, dcutoff
+        self.prev = None
+
+    @staticmethod
+    def _alpha(cutoff, dt):
+        tau = 1.0 / (2 * 3.141592653589793 * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def prime(self, x, y, t):
+        self.prev = (x, y, 0.0, 0.0, t)
+
+    def __call__(self, x, y, t):
+        if self.prev is None:
+            self.prime(x, y, t)
+            return x, y
+        px, py, pdx, pdy, pt = self.prev
+        dt = max(t - pt, 1e-3)
+        ad = self._alpha(self.dcutoff, dt)
+        dx = pdx + ad * ((x - px) / dt - pdx)
+        dy = pdy + ad * ((y - py) / dt - pdy)
+        cutoff = self.min_cutoff + self.beta * (dx * dx + dy * dy) ** 0.5
+        a = self._alpha(cutoff, dt)
+        fx, fy = px + a * (x - px), py + a * (y - py)
+        self.prev = (fx, fy, dx, dy, t)
+        return fx, fy
+
+
 class Controller:
-    """Ishorani aniqlab, kursor/bosish/scroll amallarini bajaradi."""
+    """Ishorani aniqlab, kursor/bosish/scroll/sudrash amallarini bajaradi."""
 
     def __init__(self, screen_w, screen_h, cursor_pos, io=None):
         self.sw, self.sh = screen_w, screen_h
         self.cur_x, self.cur_y = cursor_pos
-        self.io = io or {"cursor": set_cursor, "click": click, "wheel": wheel}
+        self.io = io or {"cursor": set_cursor, "click": click, "wheel": wheel,
+                         "down": mouse_down, "up": mouse_up}
         self.history = deque(maxlen=5)    # kursorning oxirgi joylari (bosishdagi siljishni qaytarish uchun)
-        self.reset()
+        self.filter = OneEuro(CURSOR_MIN_CUTOFF, CURSOR_BETA)
+        self.enabled = True
+        self.fist_start = None
+        self.fist_latched = False
+        self.fist_progress = 0.0
         self.last_click = float("-inf")
+        self.reset()
 
+    # ----- holatni tozalash
     def reset(self):
-        self.together = False
+        self.release()
+        self.pinching = False
         self.candidate, self.streak, self.confirmed = "none", 0, "none"
         self.scroll_y = None
         self.scroll_acc = 0.0
-        self.anchor_y = None              # 3 barmoq ochiq turganda qo'l boshlang'ich balandligi
         self.lost = 0
+        self.fist_start, self.fist_latched, self.fist_progress = None, False, 0.0
         self.history.clear()
+
+    def release(self):
+        if getattr(self, "dragging", False):
+            self.io["up"]()
+        self.dragging = False
+        self.drag_off = (0.0, 0.0)
 
     def no_hand(self):
         # qo'l 1-2 kadrga yo'qolsa holatni saqlab turamiz (uzilib-uzilib qolmasligi uchun)
@@ -207,10 +273,15 @@ class Controller:
             self.reset()
             self.lost = LOST_GRACE + 1
 
+    @property
+    def status(self):
+        return self.confirmed if self.enabled else "off"
+
+    # ----- asosiy yangilanish
     def update(self, lm, now=None):
         now = time.time() if now is None else now
         self.lost = 0
-        gesture, self.together = classify(lm, self.together)
+        gesture, self.pinching = classify(lm, self.pinching)
         palm_y = lm[9].y
 
         if gesture == self.candidate:
@@ -222,8 +293,15 @@ class Controller:
                 "scroll": SCROLL_FRAMES}.get(self.candidate, 2)
         if self.streak >= need:
             prev, self.confirmed = self.confirmed, self.candidate
-            if self.confirmed == "move":
-                self._move(lm)
+            self._fist_toggle(now)
+            if prev == "drag" and self.confirmed != "drag":
+                self.release()
+            if not self.enabled:
+                pass
+            elif self.confirmed == "move":
+                self._move(lm, now, prev != "move")
+            elif self.confirmed == "drag":
+                self._drag(lm, now, prev != "drag")
             elif self.confirmed in ("right", "left") and prev != self.confirmed \
                     and now - self.last_click > CLICK_COOLDOWN:
                 if self.history:          # ishora boshlanishidan oldingi joyga qaytamiz
@@ -235,19 +313,51 @@ class Controller:
                 self._scroll(palm_y, prev != "scroll")
         if self.confirmed != "scroll":
             self.scroll_y = None
-        return self.confirmed
+        return self.status
 
-    def _move(self, lm):
+    # ----- mushtni ushlab turish: dasturni yoqish/o'chirish
+    def _fist_toggle(self, now):
+        if self.confirmed != "fist":
+            self.fist_start, self.fist_latched, self.fist_progress = None, False, 0.0
+            return
+        if self.fist_start is None:
+            self.fist_start = now
+        self.fist_progress = min((now - self.fist_start) / FIST_HOLD, 1.0)
+        if self.fist_progress >= 1.0 and not self.fist_latched:
+            self.fist_latched = True          # mushtni ochmaguncha qayta almashmaydi
+            self.enabled = not self.enabled
+            self.release()
+            self.history.clear()
+
+    # ----- kursor
+    def _target(self, lm):
         nx = min(max((lm[8].x - MARGIN) / (1 - 2 * MARGIN), 0), 1)
         ny = min(max((lm[8].y - MARGIN) / (1 - 2 * MARGIN), 0), 1)
-        tx, ty = nx * (self.sw - 1), ny * (self.sh - 1)
-        d = ((tx - self.cur_x) ** 2 + (ty - self.cur_y) ** 2) ** 0.5 / self.sw
-        alpha = MIN_ALPHA + (MAX_ALPHA - MIN_ALPHA) * min(d / FAST_DIST, 1)
-        self.cur_x += (tx - self.cur_x) * alpha
-        self.cur_y += (ty - self.cur_y) * alpha
+        return nx * (self.sw - 1), ny * (self.sh - 1)
+
+    def _move(self, lm, now, first):
+        if first:
+            self.filter.prime(self.cur_x, self.cur_y, now)
+        tx, ty = self._target(lm)
+        self.cur_x, self.cur_y = self.filter(tx, ty, now)
         self.io["cursor"](self.cur_x, self.cur_y)
         self.history.append((self.cur_x, self.cur_y))
 
+    def _drag(self, lm, now, first):
+        tx, ty = self._target(lm)
+        if first:
+            if self.history:              # barmoqlar tekkunga qadar bo'lgan joyni bosamiz
+                self.cur_x, self.cur_y = self.history[0]
+                self.io["cursor"](self.cur_x, self.cur_y)
+            self.drag_off = (self.cur_x - tx, self.cur_y - ty)
+            self.filter.prime(self.cur_x, self.cur_y, now)
+            self.io["down"]()
+            self.dragging = True
+            return
+        self.cur_x, self.cur_y = self.filter(tx + self.drag_off[0], ty + self.drag_off[1], now)
+        self.io["cursor"](self.cur_x, self.cur_y)
+
+    # ----- scroll
     def _scroll(self, y, first):
         if first or self.scroll_y is None:
             self.scroll_y, self.scroll_acc = y, 0.0
@@ -271,11 +381,20 @@ def main():
         base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
         running_mode=vision.RunningMode.VIDEO,
         num_hands=1,
-        min_hand_detection_confidence=0.4,
-        min_hand_presence_confidence=0.4,
-        min_tracking_confidence=0.4,
+        min_hand_detection_confidence=0.3,
+        min_hand_presence_confidence=0.3,
+        min_tracking_confidence=0.3,
     )
     landmarker = vision.HandLandmarker.create_from_options(options)
+    # zaxira detektor: asosiysi qo'lni yo'qotsa, kontrasti oshirilgan kadrda har safar noldan qidiradi
+    rescue = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
+        running_mode=vision.RunningMode.IMAGE,
+        num_hands=1,
+        min_hand_detection_confidence=0.25,
+        min_hand_presence_confidence=0.25,
+    ))
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 
     cam = LatestFrame(CAM_INDEX)
 
@@ -284,7 +403,9 @@ def main():
     last_ts = -1
     labels = {"move": "1 barmoq: HARAKAT", "right": "2 barmoq: O'NG TUGMA",
               "left": "3 barmoq: CHAP TUGMA", "scroll": "5 barmoq: SCROLL (qo'lni tepaga/pastga)",
-              "none": "Qo'l yo'q / noma'lum"}
+              "drag": "TEKKIZISH: SUDRASH", "fist": "MUSHT: ushlab turing...",
+              "none": "Qo'l yo'q / noma'lum",
+              "off": "O'CHIRILGAN - yoqish uchun mushtni 1 soniya ushlang"}
 
     while True:
         frame = cam.read()
@@ -300,8 +421,15 @@ def main():
         result = landmarker.detect_for_video(
             mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts)
 
-        if result.hand_landmarks:
-            lm = result.hand_landmarks[0]
+        hands = result.hand_landmarks
+        if not hands:                                    # qo'l yo'qoldi -> zaxira usuli
+            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            lab[:, :, 0] = clahe.apply(lab[:, :, 0])
+            boosted = cv2.cvtColor(cv2.cvtColor(lab, cv2.COLOR_LAB2BGR), cv2.COLOR_BGR2RGB)
+            hands = rescue.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=boosted)).hand_landmarks
+
+        if hands:
+            lm = hands[0]
             ctrl.update(lm)
             pts = [(int(p.x * w), int(p.y * h)) for p in lm]
             for a, b in CONNECTIONS:
@@ -311,14 +439,20 @@ def main():
 
         cv2.rectangle(frame, (int(MARGIN * w), int(MARGIN * h)),
                       (int((1 - MARGIN) * w), int((1 - MARGIN) * h)), (255, 128, 0), 1)
-        cv2.putText(frame, labels[ctrl.confirmed], (10, 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        cv2.putText(frame, f"barmoqlar: {DEBUG['up']}", (10, h - 12),
+        status = ctrl.status
+        if status == "fist" and ctrl.fist_progress > 0:      # mushtni ushlash progressi
+            cv2.rectangle(frame, (10, 40), (10 + int(200 * ctrl.fist_progress), 52), (0, 255, 255), -1)
+            cv2.rectangle(frame, (10, 40), (210, 52), (255, 255, 255), 1)
+        color = (0, 0, 255) if status == "off" else (0, 255, 255)
+        cv2.putText(frame, labels[status], (10, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.putText(frame, f"barmoqlar: {DEBUG['up']}  tekkizish: {DEBUG['pinch']:.2f}", (10, h - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         cv2.imshow("Qol mishka (q - chiqish)", frame)
         if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
             break
 
+    ctrl.release()                       # sudrash paytida chiqilsa, tugma bosilgan holda qolmasin
     cam.release()
     cv2.destroyAllWindows()
     landmarker.close()
