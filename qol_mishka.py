@@ -91,32 +91,59 @@ DEBUG = {"pinch": 0.0, "up": 0}
 
 # ---------------------------------------------------------------- kamera
 class LatestFrame:
-    """Kamerani alohida oqimda o'qiydi, doim eng yangi kadrni beradi (kechikishni yo'qotadi)."""
+    """Kamerani alohida oqimda o'qiydi, doim eng yangi kadrni beradi (kechikishni yo'qotadi).
+
+    Kamerani ochishda turli usul (MSMF/DSHOW/standart) va o'lchamlar (1280x720, 640x480, kameraning
+    o'z o'lchami) sinab ko'riladi: ba'zi kameralar ayrim rejimda buzuq kadr qaytaradi."""
+
+    BACKENDS = (cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY)
 
     @staticmethod
-    def _open(index):
-        """Kamerani ochishga urinadi: avval MSMF (30 kadr/s), keyin DSHOW, keyin standart."""
-        for backend in (cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY):
-            cap = cv2.VideoCapture(index, backend)
-            if cap.isOpened():
-                ok = False
-                for _ in range(15):          # birinchi kadrlar ba'zan bo'sh keladi
-                    ok, _f = cap.read()
-                    if ok:
-                        break
-                    time.sleep(0.05)
-                if ok:
-                    return cap
-            cap.release()
+    def _good_frame(cap):
+        """Kameradan bir nechta kadr o'qib, buzuq emasligini tekshiradi. Yaroqli kadrni qaytaradi yoki None."""
+        for _ in range(20):
+            try:
+                ok, f = cap.read()
+            except cv2.error:
+                return None
+            if ok and f is not None and f.ndim == 3 and f.shape[0] > 0 and f.shape[1] > 0:
+                try:
+                    f = f.copy()               # buzuq stride bo'lsa shu yerda xato beradi
+                except cv2.error:
+                    return None
+                return f
+            time.sleep(0.05)
         return None
 
+    @classmethod
+    def _open(cls, index):
+        sizes = [(FRAME_W, FRAME_H), (640, 480), None]
+        for backend in cls.BACKENDS:
+            for size in sizes:
+                cap = cv2.VideoCapture(index, backend)
+                if not cap.isOpened():
+                    cap.release()
+                    break                      # bu usulda kamera umuman ochilmadi
+                if size:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                # avtomatik ekspozitsiya (aks holda kamera qorong'i qolib ketishi mumkin)
+                cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+                cap.set(cv2.CAP_PROP_BRIGHTNESS, 0)
+                f = cls._good_frame(cap)
+                if f is not None:
+                    return cap, f
+                cap.release()
+        return None, None
+
     def __init__(self, index):
-        # MSMF 30 kadr/s beradi; DSHOW esa xira yorug'likda 15 kadr/s ga tushib qotishga sabab bo'ladi
-        self.cap = self._open(index)
+        self.cap, first = self._open(index)
         if self.cap is None:                 # boshqa kamera raqamlarini ham sinab ko'ramiz
             for i in range(4):
                 if i != index:
-                    self.cap = self._open(i)
+                    self.cap, first = self._open(i)
                     if self.cap is not None:
                         print(f"Kamera {i}-raqam bilan topildi.")
                         break
@@ -125,24 +152,30 @@ class LatestFrame:
                 "Kamera ochilmadi.\n"
                 " - Kamera ulanganini tekshiring va boshqa dastur (Zoom, Teams...) uni ishlatmayotganiga ishonch hosil qiling.\n"
                 " - Windows: Sozlamalar > Maxfiylik > Kamera > 'Desktop ilovalarga ruxsat berish' yoqilgan bo'lsin.")
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        # avtomatik ekspozitsiya (aks holda kamera qorong'i qolib ketishi mumkin)
-        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
-        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 0)
+        self.size = (first.shape[1], first.shape[0])
         self.frame = None
         self.stop = False
         self.lock = threading.Lock()
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self):
+        errors = 0
         while not self.stop:
-            ok, f = self.cap.read()
-            if ok:
-                with self.lock:
-                    self.frame = f
+            try:
+                ok, f = self.cap.read()
+                if ok and f is not None:
+                    f = f.copy()
+                    with self.lock:
+                        self.frame = f
+                    errors = 0
+                    continue
+            except cv2.error:
+                pass
+            errors += 1                        # buzuq kadr: dastur yiqilmaydi, biroz kutib davom etadi
+            time.sleep(0.01)
+            if errors > 300:
+                print("Kamera kadr bermayapti (uzilib qoldimi?).")
+                self.stop = True
 
     def read(self):
         with self.lock:
@@ -655,7 +688,7 @@ def main():
             cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)   # sichqoncha bilan o'lchamini o'zgartirsa bo'ladi
             state["win"], state["size"] = True, None
         if state["size"] != want_w:
-            cv2.resizeWindow(WINDOW, want_w, int(want_w * FRAME_H / FRAME_W))
+            cv2.resizeWindow(WINDOW, want_w, int(want_w * cam.size[1] / cam.size[0]))
             state["size"] = want_w
 
     running = True
