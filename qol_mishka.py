@@ -15,6 +15,7 @@ Tugmalar (kamera oynasida): q - chiqish, h - yashirish, m - kichik/katta, s - so
 Hamma joyda ishlaydigan: Ctrl+Alt+Q / H / M / S / K.
 """
 import argparse
+import atexit
 import ctypes
 import os
 import sys
@@ -572,14 +573,22 @@ class Calibrator:
 
     @property
     def corner(self):
-        return self.CORNERS[self.idx]
+        return self.CORNERS[min(self.idx, len(self.CORNERS) - 1)]
 
     def feed(self, lm, gesture):
         """Har kadrda chaqiriladi. Tugaganda True qaytaradi (natija self.result da)."""
         if lm is None or gesture != "move":
             self.samples = []
             return False
-        self.samples.append((lm[8].x, lm[8].y))
+        pos = (lm[8].x, lm[8].y)
+        # oldingi burchakdan qo'l siljib ketmaguncha yangi burchak uchun o'lchamaymiz
+        if self.points and not self.samples and \
+                ((pos[0] - self.points[-1][0]) ** 2 + (pos[1] - self.points[-1][1]) ** 2) ** 0.5 < 0.12:
+            return False
+        # barmoq joyidan siljisa, o'lchashni qaytadan boshlaymiz (barqaror turishi kerak)
+        if self.samples and ((pos[0] - self.samples[0][0]) ** 2 + (pos[1] - self.samples[0][1]) ** 2) ** 0.5 > 0.06:
+            self.samples = []
+        self.samples.append(pos)
         if len(self.samples) < CAL_FRAMES:
             return False
         xs = sorted(s[0] for s in self.samples)
@@ -649,6 +658,7 @@ def main():
 
     cam = LatestFrame(CAM_INDEX)
     ctrl = Controller(*pyautogui.size(), pyautogui.position())
+    atexit.register(ctrl.release)        # xato bilan yopilsa ham sichqoncha tugmasi bosilgan holda qolmasin
     hotkeys = Hotkeys()
     state = {"hidden": args.yashirin, "mini": False, "calib": None, "win": None, "size": None}
 
@@ -755,6 +765,7 @@ def main():
                 settings.save()
                 settings.apply(globals())
                 state["calib"], ctrl.paused = None, False
+            cal = state["calib"]                   # tugagan bo'lsa chizishda ishlatilmasin
             if not state["hidden"]:
                 pts = [(int(p.x * w), int(p.y * h)) for p in lm]
                 for a, b in CONNECTIONS:
