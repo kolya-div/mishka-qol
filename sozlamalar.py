@@ -24,6 +24,7 @@ NUMERIC = [
     ("cam_index", "Kamera raqami (qayta ishga tushirish kerak)", 0, 5, 1, 0, "CAM_INDEX"),
 ]
 BOOLEAN = [
+    ("swap_buttons", "2 barmoq = CHAP tugma, 3 barmoq = O'NG tugma (o'chirilsa aksincha)", True, "SWAP_BUTTONS"),
     ("relative", "Tezlashuvli (nisbiy) kursor rejimi", False, "RELATIVE_MODE"),
     ("swipe", "Orqaga/oldinga ishorasi (kaftni yon tomonga siltash)", True, "SWIPE_ENABLED"),
 ]

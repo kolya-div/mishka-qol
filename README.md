@@ -24,8 +24,8 @@ Parametrlar: `--yashirin` (kamera oynasiz, fonda), `--avtoyoqish` / `--avtoyoqis
 | Ishora | Natija |
 |---|---|
 | 1 barmoq (ko'rsatkich) | Kursor harakati |
-| 2 barmoq (ko'rsatkich + o'rta) | O'ng tugma |
-| 3 barmoq (ko'rsatkich + o'rta + nomsiz) | Chap tugma |
+| 2 barmoq (ko'rsatkich + o'rta) | Chap tugma |
+| 3 barmoq (ko'rsatkich + o'rta + nomsiz) | O'ng tugma |
 | Ko'rsatkich + jimjiloq ("rok") | Ikki marta bosish |
 | Bosh va ko'rsatkich barmoqni tekkizib ushlash | Sudrash (qo'yib yuborsangiz tashlanadi) |
 | Ochiq kaft + qo'lni tepaga/pastga | Scroll |

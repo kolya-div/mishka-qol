@@ -2,8 +2,8 @@
 
 Imo-ishoralar:
   1 barmoq (ko'rsatkich)                 -> kursor qo'l bilan harakatlanadi
-  2 barmoq (ko'rsatkich + o'rta)         -> O'NG tugma
-  3 barmoq (ko'rsatkich, o'rta, nomsiz)  -> CHAP tugma
+  2 barmoq (ko'rsatkich + o'rta)         -> CHAP tugma   (sozlamalarda almashtirish mumkin)
+  3 barmoq (ko'rsatkich, o'rta, nomsiz)  -> O'NG tugma
   ko'rsatkich + jimjiloq ("rok")         -> IKKI MARTA BOSISH
   bosh + ko'rsatkich tekkizib ushlash    -> SUDRASH (qo'yib yuborsangiz tashlanadi)
   ochiq kaft + qo'lni tepaga/pastga      -> SCROLL
@@ -71,8 +71,9 @@ SWIPE_WINDOW = 0.4             # shu soniya ichida
 SWIPE_COOLDOWN = 1.0
 
 LOST_GRACE = 8                 # qo'l shuncha kadr ko'rinmasa ham oldingi holat saqlanadi
-LEFT_FRAMES = 6                # ishora shuncha kadr ketma-ket ushlansagina bosiladi (tasodifiy bosishga qarshi)
-RIGHT_FRAMES = 8               # o'ng tugma: 3 barmoqqa o'tishda oraliqdagi 2 barmoq bosilib ketmasin
+THREE_FRAMES = 6               # 3 barmoq shuncha kadr ketma-ket ushlansagina bosiladi (tasodifiy bosishga qarshi)
+TWO_FRAMES = 8                 # 2 barmoq: 3 barmoqqa o'tishda oraliqdagi 2 barmoq bosilib ketmasin
+SWAP_BUTTONS = True            # True: 2 barmoq = CHAP tugma, 3 barmoq = O'NG tugma; False: aksincha
 DOUBLE_FRAMES = 6
 DRAG_FRAMES = 3
 UP_ON = 150                    # barmoq burchagi (gradus) shundan katta bo'lsa 'ochiq'
@@ -240,6 +241,13 @@ def mouse_up():
     pyautogui.mouseUp(button="left")
 
 
+def click_button(gesture):
+    """Ishora -> sichqoncha tugmasi. SWAP_BUTTONS=True: 2 barmoq = chap, 3 barmoq = o'ng."""
+    if gesture == "two":
+        return "left" if SWAP_BUTTONS else "right"
+    return "right" if SWAP_BUTTONS else "left"
+
+
 def swipe(direction):
     """Qo'l o'ngga siltandi -> oldinga (Alt+O'ng), chapga -> orqaga (Alt+Chap)."""
     pyautogui.hotkey("alt", "right" if direction == "right" else "left")
@@ -328,11 +336,11 @@ def classify(lm, pinching, fs=None):
     if all(up.values()):                  # 4 ta barmoq (bosh barmoq e'tiborga olinmaydi) = ochiq kaft
         return "scroll", False
     if up["index"] and up["middle"] and up["ring"] and not up["pinky"]:
-        return "left", False
+        return "three", False
     if up["index"] and up["pinky"] and not up["middle"] and not up["ring"]:
         return "double", False
     if count == 2 and up["index"] and up["middle"]:
-        return "right", False
+        return "two", False
     if up["index"] and count == 1:
         return "move", False
     return "none", False
@@ -466,7 +474,7 @@ class Controller:
         else:
             self.candidate, self.streak = gesture, 1
 
-        need = {"move": 1, "left": LEFT_FRAMES, "right": RIGHT_FRAMES, "double": DOUBLE_FRAMES,
+        need = {"move": 1, "three": THREE_FRAMES, "two": TWO_FRAMES, "double": DOUBLE_FRAMES,
                 "drag": DRAG_FRAMES, "scroll": SCROLL_FRAMES}.get(self.candidate, 2)
         if self.streak >= need:
             prev, self.confirmed = self.confirmed, self.candidate
@@ -481,7 +489,7 @@ class Controller:
                 self._move(lm, now, prev != "move")
             elif self.confirmed == "drag":
                 self._drag(lm, now, prev != "drag")
-            elif self.confirmed in ("right", "left", "double") and prev != self.confirmed \
+            elif self.confirmed in ("two", "three", "double") and prev != self.confirmed \
                     and now - self.last_click > CLICK_COOLDOWN:
                 self._click(self.confirmed, now)
             elif self.confirmed == "scroll":
@@ -524,7 +532,7 @@ class Controller:
         if kind == "double":
             self.io["double"]()
         else:
-            self.io["click"](kind)
+            self.io["click"](click_button(kind))
         self.last_click = now
 
     # ----- kursor
@@ -705,8 +713,8 @@ def draw_hand(frame, lm, ctrl, names=True):
     cv2.drawMarker(frame, pts[8], (255, 255, 255), cv2.MARKER_CROSS, int(26 * k), max(1, int(k)))
 
 
-LABELS = {"move": "1 barmoq: HARAKAT", "right": "2 barmoq: O'NG TUGMA",
-          "left": "3 barmoq: CHAP TUGMA", "scroll": "OCHIQ KAFT: SCROLL / yon tomonga siltash",
+LABELS = {"move": "1 barmoq: HARAKAT", "two": "2 barmoq: CHAP TUGMA", "three": "3 barmoq: O'NG TUGMA",
+          "scroll": "OCHIQ KAFT: SCROLL / yon tomonga siltash",
           "drag": "TEKKIZISH: SUDRASH", "fist": "MUSHT: ushlab turing (o'chirish)...",
           "double": "ROK ISHORA: IKKI MARTA BOSISH", "none": "Qo'l yo'q / noma'lum",
           "off": "O'CHIRILGAN - yoqish: kaftni TO'LIQ oching va ushlab turing"}
@@ -899,7 +907,12 @@ def main():
             cv2.rectangle(frame, (10, y0b), (10 + int(bw * prog), y1b), pcol, -1)
             cv2.rectangle(frame, (10, y0b), (10 + bw, y1b), (255, 255, 255), 1)
         color = (0, 0, 255) if status == "off" else (0, 255, 255)
-        cv2.putText(frame, LABELS[status], (10, int(30 * k)), font, 0.65 * k, color, max(2, int(2 * k)))
+        if status in ("two", "three"):
+            label = f"{'2' if status == 'two' else '3'} barmoq: " + \
+                    ("CHAP" if click_button(status) == "left" else "O'NG") + " TUGMA"
+        else:
+            label = LABELS[status]
+        cv2.putText(frame, label, (10, int(30 * k)), font, 0.65 * k, color, max(2, int(2 * k)))
 
         if cal:
             name, cx, cy = cal.corner
