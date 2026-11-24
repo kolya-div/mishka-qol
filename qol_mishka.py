@@ -67,10 +67,18 @@ ACCEL_SPEED = 0.8              # (ekran kengligi / soniya) shu tezlikda tezlashu
 
 PINCH_ON = 0.28                # bosh va ko'rsatkich uchlari orasi (kaft o'lchamiga nisbatan) < shu bo'lsa "tegdi"
 PINCH_OFF = 0.42
+PINCH_FROM = 0.55              # sudrash faqat barmoq uchlari avval shundan uzoq turgan bo'lsa boshlanadi (yaqinlashib tegsa)
+PINCH_MEMORY = 1.0             # ...va bu oxirgi shuncha soniya ichida bo'lgan bo'lsa
 FIST_MIN_RATIO = 0.45          # mushtda bosh va ko'rsatkich uchlari shundan uzoqroq bo'ladi
 FIST_HOLD = 1.0                # mushtni shuncha soniya ushlasangiz dastur o'chadi
-THUMB_OUT = 0.55               # bosh barmoq uchi - ko'rsatkich asosi / kaft uzunligi > shu bo'lsa "ochiq"
-ENABLE_HOLD = 2.0              # kaftni to'liq ochib shuncha soniya ushlasangiz dastur yoqiladi
+THUMB_ON = 0.45                # bosh barmoq uchi - ko'rsatkich asosi / kaft uzunligi > shu bo'lsa ANIQ "ochiq"
+THUMB_OFF = 0.25               # < shu bo'lsa ANIQ "yopiq"; oraliqda oldingi holat saqlanadi (yaqinlashsa ham yashil turadi)
+ENABLE_HOLD = 1.0              # kaftni to'liq ochib shuncha soniya ushlasangiz dastur yoqiladi
+SURE_ONLY = True               # faqat ANIQ ishoraga buyruq: barmoq burchagi noaniq zonada bo'lsa hech narsa qilmaydi
+STILL_CLICK = True             # bosish uchun qo'l qimirlamay turishi kerak
+STILL_WINDOW = 0.25            # shuncha soniya ichida qo'l...
+STILL_REL = 0.30               # ...o'z o'lchamining shuncha ulushidan ko'p siljimagan bo'lsa "qimirlamayapti"
+FAR_FRAMES = 0.35              # uzoqda (qo'l kichik) shovqin ko'p: ishora ushlanishi kerak bo'lgan kadrlar shuncha ko'payadi
 AUTO_OFF_SECONDS = 5.0         # qo'l shuncha soniya ko'rinmasa dastur o'zi o'chadi
 
 SCROLL_GAIN = 6000
@@ -430,40 +438,68 @@ def finger_up(lm, name, was_up=None):
     return bool(was_up) if was_up is not None else s >= (UP_ON + UP_OFF) / 2
 
 
-def thumb_out(lm):
+def thumb_state(lm, was=None):
+    """Bosh barmoq: (ochiqmi, uchi-ko'rsatkich asosi masofasi). Gisterezis: faqat ANIQ yopilgandagina "yopiq" bo'ladi."""
     size = max(dist(lm[0], lm[9]), 1e-6)
-    return dist(lm[4], lm[5]) / size > THUMB_OUT
+    d = dist(lm[4], lm[5]) / size
+    if d >= THUMB_ON:
+        return True, d
+    if d <= THUMB_OFF:
+        return False, d
+    return (bool(was) if was is not None else True), d      # oraliq zonada noma'lum bo'lsa: yashil (ochiq)
 
 
-def classify(lm, pinching, fs=None):
+def thumb_out(lm):
+    return thumb_state(lm)[0]
+
+
+def classify(lm, pinching, fs=None, info=None):
     """-> (gesture, pinching). gesture: drag / fist / scroll / three / shaka / love / double / two / move / none
-    fs - barmoqlarning oldingi holati (gisterezis uchun, o'zgartiriladi)."""
+    fs - barmoqlarning oldingi holati (gisterezis uchun, o'zgartiriladi).
+    info - to'ldiriladigan lug'at: har barmoq ballari va ANIQ ochiq/yopiq holati (ekranda ko'rsatish uchun).
+    SURE_ONLY=True bo'lsa buyruq ishoralari faqat hamma barmoq ANIQ ochiq yoki ANIQ yopiq bo'lganda tanilanadi."""
     fs = fs if fs is not None else {}
+    sc = {n: finger_score(lm, n) for n in FINGER}
     up = {n: finger_up(lm, n, fs.get(n)) for n in FINGER}
     fs.update(up)
+    t_open, t_d = thumb_state(lm, fs.get("thumb"))
+    fs["thumb"] = t_open
+    sup = {n: sc[n] >= UP_ON for n in FINGER}        # ANIQ ochiq
+    sdn = {n: sc[n] <= UP_OFF for n in FINGER}       # ANIQ yopiq
+    t_sure_open, t_sure_closed = t_d >= THUMB_ON, t_d <= THUMB_OFF
+    if info is not None:
+        info.update(scores=sc, up=up, sup=sup, sdn=sdn, thumb=(t_open, t_sure_open, t_sure_closed, t_d))
     count = sum(up.values())
     size = max(dist(lm[0], lm[9]), 1e-6)
     ratio = dist(lm[4], lm[8]) / size             # bosh va ko'rsatkich uchlari orasi
     pinching = ratio < (PINCH_OFF if pinching else PINCH_ON)
     DEBUG["up"], DEBUG["pinch"] = count, ratio
+    if info is not None:
+        info["ratio"] = ratio
     if pinching:
         return "drag", True
     if count == 0 and ratio > FIST_MIN_RATIO:
         return "fist", False
-    if all(up.values()):                  # 4 ta barmoq (bosh barmoq e'tiborga olinmaydi) = ochiq kaft
+    # buyruq ishoralari uchun "ochiq" va "yopiq": SURE_ONLY da faqat ANIQ holat (oraliq zona = noaniq = buyruq yo'q)
+    U = (lambda n: sup[n]) if SURE_ONLY else (lambda n: up[n])
+    D = (lambda n: sdn[n]) if SURE_ONLY else (lambda n: not up[n])
+    th_open = t_sure_open if SURE_ONLY else t_open
+    if all(U(n) for n in FINGER):         # 4 ta barmoq ANIQ ochiq (bosh barmoq e'tiborga olinmaydi) = ochiq kaft
         return "scroll", False
-    if up["index"] and up["middle"] and up["ring"] and not up["pinky"]:
+    if U("index") and U("middle") and U("ring") and D("pinky"):
         return "three", False
-    to = thumb_out(lm)
-    if to and up["pinky"] and not up["index"] and not up["middle"] and not up["ring"]:
+    if D("index") and D("middle") and D("ring") and U("pinky") and th_open:
         return "shaka", False             # telefon: bosh barmoq + jimjiloq
-    if to and up["index"] and up["pinky"] and not up["middle"] and not up["ring"]:
-        return "love", False              # "seni sevaman": bosh + ko'rsatkich + jimjiloq
-    if up["index"] and up["pinky"] and not up["middle"] and not up["ring"]:
-        return "double", False
-    if count == 2 and up["index"] and up["middle"]:
+    if U("index") and U("pinky") and D("middle") and D("ring"):
+        if th_open:
+            return "love", False          # "seni sevaman": bosh + ko'rsatkich + jimjiloq
+        if not t_sure_open if SURE_ONLY else not t_open:
+            return "double", False        # rok: bosh barmoq ochiq emas
+        return "none", False
+    if U("index") and U("middle") and D("ring") and D("pinky"):
         return "two", False
-    if up["index"] and count == 1:
+    # harakat: ko'rsatkich ochiq; boshqa barmoq ANIQ ochiq bo'lmasa bo'ldi (yarim ko'tarilgan barmoq kursorni to'xtatmaydi)
+    if up["index"] and (not any(sup[n] for n in ("middle", "ring", "pinky")) if SURE_ONLY else count == 1):
         return "move", False
     return "none", False
 
@@ -534,6 +570,9 @@ class Controller:
         self.size_now = None               # qo'lning hozirgi o'lchami
         self.size_ema = None
         self.vol_y = None
+        self.info = {}                     # oxirgi kadrdagi barmoq ballari/holati (ekranda ko'rsatish uchun)
+        self.pos_hist = deque()            # qo'lning oxirgi joylari (bosishda qimirlamaslikni tekshirish uchun)
+        self.pinch_far = float("-inf")     # bosh va ko'rsatkich uchlari oxirgi marta uzoq turgan vaqt
         self.reset()
 
     # ----- holatni tozalash
@@ -553,6 +592,8 @@ class Controller:
         self.size_ema = None
         self.history.clear()
         self.swipe_hist.clear()
+        self.pos_hist.clear()
+        self.pinch_far = float("-inf")
 
     def release(self):
         if getattr(self, "dragging", False):
@@ -624,7 +665,9 @@ class Controller:
         if self.smooth is None:
             self.smooth = pts
         else:
-            a = LM_SMOOTH
+            # qo'l uzoqda (kichik) bo'lsa nuqtalar shovqinli: kuchliroq silliqlaymiz
+            f = min(max((self.size_ema or REF_PALM) / REF_PALM, 0.45), 1.0)
+            a = max(0.25, LM_SMOOTH * f)
             self.smooth = [(a * x + (1 - a) * ox, a * y + (1 - a) * oy, a * z + (1 - a) * oz)
                            for (x, y, z), (ox, oy, oz) in zip(pts, self.smooth)]
         return [Pt(*t) for t in self.smooth]
@@ -638,7 +681,14 @@ class Controller:
         self.size_ema = self.size_now if self.size_ema is None else \
             self.size_ema + (self.size_now - self.size_ema) * SIZE_SMOOTH
         self.pl = self._smooth_lm(world or lm)
-        gesture, self.pinching = classify(self.pl, self.pinching, self.fs)
+        gesture, self.pinching = classify(self.pl, self.pinching, self.fs, self.info)
+        self._track_pos(lm, now)
+        if self.info.get("ratio", 0.0) >= PINCH_FROM:
+            self.pinch_far = now
+        if gesture == "drag" and not self.dragging and now - self.pinch_far > PINCH_MEMORY:
+            gesture = "none"              # barmoqlar oldindan tegib turgan (mush/boshqa ishora): tasodifiy sudrash emas
+        if STILL_CLICK and gesture in ("two", "three", "double") and not self._still():
+            gesture = "none"              # qo'l harakatda: bosish ishorasi emas (o'tish paytidagi tasodifiy bosishlar)
 
         if not self.enabled:
             self._enable_check(lm, gesture, now)
@@ -652,6 +702,8 @@ class Controller:
         need = {"move": 1, "three": THREE_FRAMES, "two": TWO_FRAMES, "double": DOUBLE_FRAMES,
                 "drag": DRAG_FRAMES, "scroll": SCROLL_FRAMES, "shaka": SHAKA_FRAMES,
                 "love": LOVE_FRAMES}.get(self.candidate, 2)
+        if self.candidate in ("two", "three", "double", "shaka", "love"):
+            need = int(math.ceil(need * self.far_mult()))      # uzoqda ishora ko'proq ushlanishi kerak
         if self.streak >= need:
             prev, self.confirmed = self.confirmed, self.candidate
             if self.paused:                   # kalibrovka/o'rgatish paytida mush dasturni o'chirmaydi
@@ -690,6 +742,25 @@ class Controller:
             self.swipe_hist.clear()
         return self.status
 
+    def far_mult(self):
+        """Qo'l kichik (uzoq) bo'lsa > 1: shovqin ko'p, ishora uzoqroq ushlanishi kerak."""
+        r = REF_PALM / max(self.size_ema or REF_PALM, 1e-6)
+        return 1.0 + FAR_FRAMES * (min(max(r, 1.0), 3.0) - 1.0)
+
+    def _track_pos(self, lm, now):
+        self.pos_hist.append((now, lm[9].x * self.aspect, lm[9].y))
+        while self.pos_hist and now - self.pos_hist[0][0] > STILL_WINDOW:
+            self.pos_hist.popleft()
+
+    def _still(self):
+        """Qo'l oxirgi STILL_WINDOW soniyada deyarli qimirlamadimi (o'z o'lchamiga nisbatan)?"""
+        h = self.pos_hist
+        if len(h) < 2:
+            return True
+        xs, ys = [p[1] for p in h], [p[2] for p in h]
+        spread = ((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2) ** 0.5
+        return spread <= STILL_REL * (self.size_ema or REF_PALM)
+
     # ----- dasturni yoqish / o'chirish
     def _fist_check(self, now):
         """Mushtni FIST_HOLD soniya ushlab turilsa dastur o'chadi."""
@@ -704,7 +775,7 @@ class Controller:
 
     def _enable_check(self, lm, gesture, now):
         """O'chiq payti kaft to'liq ochilib ENABLE_HOLD soniya ushlansa dastur yoqiladi."""
-        if gesture == "scroll" and thumb_out(lm):
+        if gesture == "scroll" and self.fs.get("thumb"):      # 4 barmoq ANIQ ochiq + bosh barmoq ochiq (gisterezis bilan)
             self.enable_ok = now
             if self.enable_start is None:
                 self.enable_start = now
@@ -1122,18 +1193,26 @@ def draw_hand(frame, lm, ctrl, names=True):
     # kaft
     for a, b in PALM_LINKS:
         cv2.line(frame, pts[a], pts[b], (200, 200, 200), max(1, int(2 * k)))
-    thumb_open = thumb_out(lm)
+    info = getattr(ctrl, "info", None) or {}
+    sup, sdn = info.get("sup", {}), info.get("sdn", {})
+    t_info = info.get("thumb")
     for order, (name, (color, label, tip, joints)) in enumerate(FINGER_STYLE.items()):
-        is_up = thumb_open if name == "thumb" else bool(ctrl.fs.get(name))
+        if name == "thumb":                              # bosh barmoq: yaqinlashsa ham yashil turadi (gisterezis)
+            is_up = bool(t_info[0]) if t_info else thumb_out(lm)
+            state = "up" if is_up else "down"
+        else:                                            # yashil = ANIQ ochiq, qizil = ANIQ yopiq, sariq = noaniq
+            state = "up" if sup.get(name) else ("down" if sdn.get(name) else "mid")
+            is_up = state == "up"
         for a, b in zip(joints, joints[1:]):
             cv2.line(frame, pts[a], pts[b], color, max(2, int(3 * k)))
         for j in joints:                                  # har bir bo'g'im
             cv2.circle(frame, pts[j], max(3, int(4 * k)), (255, 255, 255), -1)
             cv2.circle(frame, pts[j], max(3, int(4 * k)), color, 1)
         # uchi: yashil = ochiq, qizil = yopiq
-        cv2.circle(frame, pts[tip], max(5, int(8 * k)), (0, 220, 0) if is_up else (0, 0, 255), -1)
+        tip_color = {"up": (0, 220, 0), "down": (0, 0, 255), "mid": (0, 215, 255)}[state]
+        cv2.circle(frame, pts[tip], max(5, int(8 * k)), tip_color, -1)
         if names:
-            text = label + (" +" if is_up else " -")
+            text = label + {"up": " +", "down": " -", "mid": " ?"}[state]
             # nomlar bir-birining ustiga tushmasligi uchun har barmoqniki turli balandlikda
             cv2.putText(frame, text, (pts[tip][0] + int(10 * k), pts[tip][1] - int((10 + 15 * (order % 3)) * k)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45 * k, color, max(1, int(k)))

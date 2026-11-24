@@ -24,6 +24,7 @@ except Exception:          # pystray o'rnatilmagan bo'lsa ham dastur ishlayverad
     pystray = None
     HAS_TRAY = False
 
+SETTINGS_VERSION = 2          # 2: yoqish vaqti standarti 2 -> 1 soniya
 FROZEN = bool(getattr(sys, "frozen", False))
 # APP_DIR: sozlamalar saqlanadigan papka (.exe yonida yoki loyiha papkasi); RES_DIR: .exe ichiga solingan fayllar
 APP_DIR = os.path.dirname(sys.executable) if FROZEN else os.path.dirname(os.path.abspath(__file__))
@@ -43,12 +44,15 @@ NUMERIC = [
     ("accel_max", "Tezlashuv kuchi (nisbiy rejimda)", 1.0, 4.0, 0.1, 2.5, "ACCEL_MAX"),
     ("zoom_gain", "Ikki qo'l bilan kattalashtirish tezligi", 1000, 15000, 500, 6000, "ZOOM_GAIN"),
     ("auto_off", "Qo'l ko'rinmasa o'chish (soniya)", 2, 30, 1, 5, "AUTO_OFF_SECONDS"),
-    ("enable_hold", "Yoqish uchun kaftni ushlash (soniya)", 0.5, 5.0, 0.5, 2.0, "ENABLE_HOLD"),
+    ("enable_hold", "Yoqish uchun kaftni ushlash (soniya)", 0.5, 5.0, 0.5, 1.0, "ENABLE_HOLD"),
+    ("thumb_off", "Bosh barmoq 'yopiq' chegarasi (kichik = yashil uzoqroq turadi)", 0.1, 0.4, 0.01, 0.25, "THUMB_OFF"),
     ("monitor", "Ekran: 0 = hamma ekranlar, 1 = asosiy, 2... = boshqalari", 0, 8, 1, 1, "MONITOR"),
     ("preview_w", "Kamera oynasi kengligi", 400, 1600, 50, 1000, "PREVIEW_W"),
     ("cam_index", "Kamera raqami (qayta ishga tushirish kerak)", 0, 5, 1, 0, "CAM_INDEX"),
 ]
 BOOLEAN = [
+    ("sure_only", "Faqat ANIQ ishoraga buyruq (barmoq yarim bukilgan bo'lsa hech narsa qilmaydi)", True, "SURE_ONLY"),
+    ("still_click", "Bosish uchun qo'l qimirlamay turishi kerak (tasodifiy bosishga qarshi)", True, "STILL_CLICK"),
     ("far_mode", "Uzoqdan boshqarish (qo'l kichik ko'rinsa harakat kuchayadi)", True, "FAR_MODE"),
     ("roi", "Uzoqdagi qo'lni kattalashtirib aniqlash", True, "ROI_ENABLED"),
     ("low_light", "Qorong'i joyda kadrni avtomatik yoritish", True, "LOW_LIGHT"),
@@ -86,7 +90,10 @@ class Settings:
             return
         if not isinstance(data, dict):
             return
+        old_ver = data.get("version", 1)
         for k, _l, lo, hi, _s, d, _n in NUMERIC:
+            if old_ver < SETTINGS_VERSION and k == "enable_hold":
+                continue          # eski qiymat (2 s) o'rniga yangi standart (1 s)
             try:
                 v = float(data.get(k, d))
                 v = min(max(v, lo), hi)
@@ -105,6 +112,7 @@ class Settings:
 
     def save(self):
         data = dict(self.values)
+        data["version"] = SETTINGS_VERSION
         data["calib"] = list(self.calib) if self.calib else None
         data["train"] = list(self.train) if self.train else None
         try:
@@ -126,6 +134,7 @@ class Settings:
         for k, _l, _d, name in BOOLEAN:
             ns[name] = self.values[k]
         ns["PINCH_OFF"] = ns["PINCH_ON"] * 1.5
+        ns["THUMB_ON"] = ns["THUMB_OFF"] + 0.20      # bosh barmoq: ochiq/yopiq orasida oraliq zona
         c = self.calib
         ns["CALIB"] = tuple(c[:4]) if c else None
         ns["CALIB_PALM"] = c[4] if c and len(c) == 5 else None

@@ -40,7 +40,7 @@ Parametrlar: `--yashirin` (kamera oynasiz, fonda), `--avtoyoqish` / `--avtoyoqis
 | Ikkala qo'l ochiq, bir-biridan uzoqlashtirish / yaqinlashtirish | Kattalashtirish / kichraytirish (Ctrl + g'ildirak) |
 | Mushtni 1 soniya ushlash | Dasturni o'chirish |
 | Qo'l 5 soniya ko'rinmasa | Dastur o'zi o'chadi |
-| Kaftni **to'liq** (bosh barmoq bilan) ochib 2 soniya ushlash | Dasturni yoqish |
+| Kaftni **to'liq** (bosh barmoq bilan) ochib 1 soniya ushlash | Dasturni yoqish |
 
 O'chiq payti hech narsa bosilmaydi, kamera oynasida qizil yozuv chiqadi.
 
@@ -61,6 +61,8 @@ Ekranning yuqori o'ng burchagida kichik doira turadi (kamera oynasi yashirin bo'
 **Uzoqdan boshqarish.** Qo'l kameradan uzoqlashib kichik ko'rinsa, kursor harakati avtomatik kuchayadi (kadrdagi qo'l o'lchamiga qarab), shuning uchun uzoqdan ham joyingizdan siljimasdan butun ekranga yetasiz. Kamera oynasida "Uzoqdan boshqarish: harakat xN" yoziladi. Qo'l kadrda kichik bo'lsa, dastur uning atrofini kesib kattalashtirib tahlil qiladi ("Uzoqdagi qo'lni kattalashtirib aniqlash"), shuning uchun uzoqdan ham barmoqlar aniqroq ajraladi.
 
 **Kalibrovka** (`k`): dastur 4 burchakni ketma-ket ko'rsatadi. 1 barmoq bilan uchini har burchakka (eng chekka qulay joyga) qo'yib ushlab turing. Shundan keyin qo'lingizning qulay maydoni butun ekranga yoyiladi va o'sha masofa eslab qolinadi (shu masofada kuchaytirish 1 bo'ladi). Uzoqdan o'tirib boshqarmoqchi bo'lsangiz, kalibrovkani shu joyda qiling.
+
+**Aniq ishora.** Buyruq (bosish, ikki marta bosish, scroll, ovoz...) faqat hamma barmoq **aniq** ochiq yoki **aniq** yopiq bo'lganda ishlaydi. Kamera oynasida barmoq uchi: **yashil** = aniq ochiq, **qizil** = aniq yopiq, **sariq (?)** = noaniq (yarim bukilgan); sariq barmoq bilan hech narsa bosilmaydi. Bosh barmoq boshqa barmoqlarga yaqinlashsa ham yashil turadi (faqat mahkam yopilganda qizil bo'ladi). Bosish uchun qo'l qimirlamay turishi kerak, uzoqda esa ishora biroz uzoqroq ushlanishi kerak (shovqin ko'p). Sudrash faqat bosh va ko'rsatkich barmoq avval ochiq turib, keyin tekkanda boshlanadi. Sozlamalarda "Faqat ANIQ ishoraga buyruq", "Bosish uchun qo'l qimirlamay turishi kerak" va "Bosh barmoq 'yopiq' chegarasi" bor.
 
 **Ishoralarni o'rgatish** (`t`): avval kaftni to'liq ochib, keyin mushtni mahkam yumib 1,5 soniyadan ushlab turasiz. Dastur barmoq ochiq/yopiq chegaralarini sizning qo'lingizga moslaydi. Buyruqlar tez-tez almashib ketsa, shuni qiling.
 
