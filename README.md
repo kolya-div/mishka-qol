@@ -39,20 +39,26 @@ Parametrlar: `--yashirin` (kamera oynasiz, fonda), `--avtoyoqish` / `--avtoyoqis
 | "Seni sevaman" (bosh + ko'rsatkich + jimjiloq) + o'ngga/chapga siltash | Virtual ish stolini almashtirish (Ctrl+Win+←/→) |
 | Ikkala qo'l ochiq, bir-biridan uzoqlashtirish / yaqinlashtirish | Kattalashtirish / kichraytirish (Ctrl + g'ildirak) |
 | Mushtni 1 soniya ushlash | Dasturni o'chirish |
+| Bosh barmoqni tepaga ko'tarib (boshqa barmoqlar yumuq) 0,8 soniya ushlash | Kursor va bosishlarni **qulflash** / qulfni ochish |
+| Kursorni bir joyda ~1 soniya ushlab turish (sozlamalarda yoqiladi) | O'zi chap tugmani bosadi ("tuxtab turib bosish") |
 | Qo'l 5 soniya ko'rinmasa | Dastur o'zi o'chadi |
 | Kaftni **to'liq** (bosh barmoq bilan) ochib 1 soniya ushlash | Dasturni yoqish |
 
 O'chiq payti hech narsa bosilmaydi, kamera oynasida qizil yozuv chiqadi.
 
+## Ikki qo'l rejimi
+
+Sozlamalarda "Ikki qo'l rejimi" yoqilsa: bir qo'l faqat kursorni boshqaradi (standart: **o'ng** qo'l, sozlamalarda chap qo'l ham tanlanadi), ikkinchi qo'l bosadi: 2 barmoq = chap, 3 barmoq = o'ng, rok = ikki marta bosish, bosh va ko'rsatkichni tekkizib ushlash = sudrash (kursor qo'li sudrab olib boradi). Bosish qo'li faqat ANIQ ishorada bosadi. Ikkala qo'l ochiq bo'lsa kattalashtirish ishlaydi.
+
 ## Tugmalar
 
 Kamera oynasida: `q` chiqish · `h` yashirish · `m` kichik/katta oyna · `s` sozlamalar · `k` kalibrovka · `t` ishoralarni o'rgatish · `l` nomlarni yoqish/o'chirish.
-Hamma joyda (oyna yashirin bo'lsa ham): `Ctrl+Alt+Q / H / M / S / K / T`, `Ctrl+Alt+Probel` = yoqish/o'chirish.
-Tizim trayidagi belgi (o'ng tugma): sozlamalar, kamera, yoqish/o'chirish, kalibrovka, o'rgatish, chiqish.
+Hamma joyda (oyna yashirin bo'lsa ham): `Ctrl+Alt+Q / H / M / S / K / T / L`, `Ctrl+Alt+Probel` = yoqish/o'chirish, `Ctrl+Alt+L` = qulflash.
+Tizim trayidagi belgi (o'ng tugma): sozlamalar, kamera, yoqish/o'chirish, qulflash, **profillar**, kalibrovka, o'rgatish, chiqish.
 
 ## Holat belgisi va ovoz
 
-Ekranning yuqori o'ng burchagida kichik doira turadi (kamera oynasi yashirin bo'lsa ham): yashil = ishlayapti, qizil = o'chiq, sariq = bosish, ko'k = sudrash, to'q sariq = scroll, binafsha = ovoz/trek/ish stoli, havorang = kalibrovka/o'rgatish. U bosishlarga to'sqinlik qilmaydi. Bosish, yoqish va o'chirishda qisqa ovoz chiqadi. Ikkalasini ham sozlamalarda o'chirish mumkin.
+**Kursor yonida** ham rangli halqa turadi (xuddi shu ranglarda; "tuxtab turib bosish", qulflash, yoqish/o'chirish paytida aylana bo'lib to'lib boradi). Ekranning yuqori o'ng burchagida kichik doira turadi (kamera oynasi yashirin bo'lsa ham): yashil = ishlayapti, qizil = o'chiq, sariq = bosish, ko'k = sudrash, to'q sariq = scroll, binafsha = ovoz/trek/ish stoli, havorang = kalibrovka/o'rgatish. U bosishlarga to'sqinlik qilmaydi. Bosish, yoqish va o'chirishda qisqa ovoz chiqadi. Ikkalasini ham sozlamalarda o'chirish mumkin.
 
 ## Sozlamalar
 
@@ -62,9 +68,17 @@ Ekranning yuqori o'ng burchagida kichik doira turadi (kamera oynasi yashirin bo'
 
 **Kalibrovka** (`k`): dastur 4 burchakni ketma-ket ko'rsatadi. 1 barmoq bilan uchini har burchakka (eng chekka qulay joyga) qo'yib ushlab turing. Shundan keyin qo'lingizning qulay maydoni butun ekranga yoyiladi va o'sha masofa eslab qolinadi (shu masofada kuchaytirish 1 bo'ladi). Uzoqdan o'tirib boshqarmoqchi bo'lsangiz, kalibrovkani shu joyda qiling.
 
+**Ko'rsatilmagan barmoq "ochiq" chiqmasligi uchun.** Barmoq ochiq hisoblanishi uchun uning burchagi ham, cho'zilganligi (asosidan uchigacha masofa / uzunligi) ham yetarli bo'lishi kerak. Qo'l kameradan uzoqlashganda model barmoqlarni xato "to'g'ri" ko'rsatadi, shuning uchun uzoqda "ochiq" chegarasi avtomatik ko'tariladi. Bosh barmoq birinchi ko'ringanda noaniq zonada bo'lsa "yopiq" hisoblanadi. Mushtda bosh barmoq ko'rsatkich uchiga yaqin tursa ham u sudrash emas, mushti deb taniladi (sudrash uchun ko'rsatkich barmoq cho'zilgan bo'lishi kerak).
+
 **Aniq ishora.** Buyruq (bosish, ikki marta bosish, scroll, ovoz...) faqat hamma barmoq **aniq** ochiq yoki **aniq** yopiq bo'lganda ishlaydi. Kamera oynasida barmoq uchi: **yashil** = aniq ochiq, **qizil** = aniq yopiq, **sariq (?)** = noaniq (yarim bukilgan); sariq barmoq bilan hech narsa bosilmaydi. Bosh barmoq boshqa barmoqlarga yaqinlashsa ham yashil turadi (faqat mahkam yopilganda qizil bo'ladi). Bosish uchun qo'l qimirlamay turishi kerak, uzoqda esa ishora biroz uzoqroq ushlanishi kerak (shovqin ko'p). Sudrash faqat bosh va ko'rsatkich barmoq avval ochiq turib, keyin tekkanda boshlanadi. Sozlamalarda "Faqat ANIQ ishoraga buyruq", "Bosish uchun qo'l qimirlamay turishi kerak" va "Bosh barmoq 'yopiq' chegarasi" bor.
 
 **Ishoralarni o'rgatish** (`t`): avval kaftni to'liq ochib, keyin mushtni mahkam yumib 1,5 soniyadan ushlab turasiz. Dastur barmoq ochiq/yopiq chegaralarini sizning qo'lingizga moslaydi. Buyruqlar tez-tez almashib ketsa, shuni qiling.
+
+**Ishora jurnali.** `ishora_jurnali.txt` ga har bir bosish, sudrash, qulflash va **noaniq (sariq) ishora** barmoq ballari, cho'zilganligi, bosh barmoq masofasi va qo'l o'lchami bilan yoziladi. Adashish bo'lsa shu faylning oxirgi qatorlarini yuboring: chegaralarni aniq sizning qo'lingizga moslash mumkin. Sozlamalarda o'chirsa bo'ladi.
+
+**Profillar.** Sozlamalar oynasida (yoki tray menyusida) hozirgi sozlamalar, kalibrovka va o'rgatish natijasini nom bilan saqlab, keyin bir bosishda yuklash mumkin (turli odam yoki kompyuter uchun). Fayllar `profillar` papkasida.
+
+**Kursor bo'sh zonasi.** Kursor bir necha pikseldan kichik siljishga javob bermaydi (sozlamalarda 0-15 piksel): mayda tugmaga aniq tegish osonlashadi. **Kam quvvat rejimi:** qo'l 3 soniya ko'rinmasa kadrlarning uchdan biri tahlil qilinadi, protsessor yuki kamayadi.
 
 **Qorong'i joy.** Kadr qorong'i bo'lsa, qo'lni topish uchun u avtomatik yoritiladi (kamera oynasida "yoritish xN" yoziladi).
 
