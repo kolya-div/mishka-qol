@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 settings.json
+xato.log
+build/
+dist/
+*.spec

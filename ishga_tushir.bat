@@ -14,7 +14,7 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
-if not exist ".venv\.installed" (
+if not exist ".venv\.installed_v2" (
     echo Kutubxonalar o'rnatilmoqda ^(birinchi marta bir necha daqiqa olishi mumkin^)...
     ".venv\Scripts\python.exe" -m pip install --upgrade pip
     ".venv\Scripts\python.exe" -m pip install -r requirements.txt
@@ -24,7 +24,7 @@ if not exist ".venv\.installed" (
         pause
         exit /b 1
     )
-    echo ok> ".venv\.installed"
+    echo ok> ".venv\.installed_v2"
 )
 
 ".venv\Scripts\python.exe" qol_mishka.py %*

@@ -4,15 +4,19 @@ Imo-ishoralar:
   1 barmoq (ko'rsatkich)                 -> kursor qo'l bilan harakatlanadi
   2 barmoq (ko'rsatkich + o'rta)         -> CHAP tugma   (sozlamalarda almashtirish mumkin)
   3 barmoq (ko'rsatkich, o'rta, nomsiz)  -> O'NG tugma
-  ko'rsatkich + jimjiloq ("rok")         -> IKKI MARTA BOSISH
+  ko'rsatkich + jimjiloq ("rok")         -> IKKI MARTA BOSISH (bosh barmoq yopiq)
   bosh + ko'rsatkich tekkizib ushlash    -> SUDRASH (qo'yib yuborsangiz tashlanadi)
   ochiq kaft + qo'lni tepaga/pastga      -> SCROLL
   ochiq kaft + qo'lni tez o'ngga/chapga  -> brauzerda OLDINGA / ORQAGA
+  telefon (bosh + jimjiloq ochiq)        -> tepaga/pastga = OVOZ, o'ngga/chapga siltash = KEYINGI/OLDINGI TREK
+  "seni sevaman" (bosh+ko'rsatkich+jimjiloq) + o'ngga/chapga siltash -> ISH STOLINI almashtirish
+  ikkala qo'l ochiq, uzoqlashtirish/yaqinlashtirish -> KATTALASHTIRISH (Ctrl + g'ildirak)
   mushtni 1 soniya ushlash               -> dasturni o'chirish
   qo'l 5 soniya ko'rinmasa               -> dastur o'zi o'chadi
   kaftni to'liq ochib 2 soniya ushlash   -> dasturni yoqish
-Tugmalar (kamera oynasida): q - chiqish, h - yashirish, m - kichik/katta, s - sozlamalar, k - kalibrovka.
-Hamma joyda ishlaydigan: Ctrl+Alt+Q / H / M / S / K.
+Tugmalar (kamera oynasida): q - chiqish, h - yashirish, m - kichik/katta, s - sozlamalar, k - kalibrovka,
+  t - ishoralarni o'rgatish, l - nomlar.
+Hamma joyda ishlaydigan: Ctrl+Alt+Q / H / M / S / K / T, Ctrl+Alt+Probel - yoqish/o'chirish.
 """
 import argparse
 import atexit
@@ -22,18 +26,22 @@ import os
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 from collections import deque
 
 import cv2
 import mediapipe as mp
+import numpy as np
 import pyautogui
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
 import sozlamalar
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hand_landmarker.task")
+MODEL_PATH = os.path.join(sozlamalar.APP_DIR, "hand_landmarker.task")
+if not os.path.exists(MODEL_PATH) and os.path.exists(os.path.join(sozlamalar.RES_DIR, "hand_landmarker.task")):
+    MODEL_PATH = os.path.join(sozlamalar.RES_DIR, "hand_landmarker.task")   # .exe ichiga solingan model
 MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
              "hand_landmarker/float16/1/hand_landmarker.task")
 
@@ -87,6 +95,23 @@ LM_SMOOTH = 0.6                # ishora tanish uchun nuqtalarni silliqlash (1 = 
 CLICK_COOLDOWN = 0.4
 
 CAL_FRAMES = 40                # kalibrovkada har burchakda shuncha kadr ushlab turish kerak
+TRAIN_FRAMES = 45              # ishoralarni o'rgatishda har bosqichda shuncha kadr
+
+LOW_LIGHT = True               # qorong'i joyda kadrni avtomatik yoritish
+LOW_LIGHT_LEVEL = 70           # kadr o'rtacha yorqinligi (0-255) shundan kam bo'lsa yoritiladi
+ROI_ENABLED = True             # uzoqdagi (kichik) qo'lni kattalashtirib aniqlash
+ROI_MAX_HAND = 0.5             # qo'l balandligi kadrning shu qismidan kichik bo'lsa kesib kattalashtiriladi
+ROI_PAD = 2.2                  # kesim o'lchami = qo'l o'lchami x shu son
+ZOOM_ENABLED = True            # ikki qo'l bilan kattalashtirish
+ZOOM_GAIN = 6000
+MEDIA_ENABLED = True           # telefon va 'seni sevaman' ishoralari
+VOLUME_STEP = 0.03             # qo'l shuncha (kadr balandligi ulushi) siljisa ovoz 1 qadam o'zgaradi
+SHAKA_FRAMES = 3
+LOVE_FRAMES = 4
+SOUND_ENABLED = True
+OVERLAY_ENABLED = True
+TRAY_ENABLED = True
+MONITOR = 1                    # 0 = hamma ekranlar, 1 = asosiy, 2... = boshqalari
 
 pyautogui.PAUSE = 0
 pyautogui.FAILSAFE = False
@@ -253,6 +278,92 @@ def click_button(gesture):
     return "right" if SWAP_BUTTONS else "left"
 
 
+def _key(vk, up=False, ext=False):
+    ctypes.windll.user32.keybd_event(vk, 0, (2 if up else 0) | (1 if ext else 0), 0)
+
+
+def press_keys(*keys):
+    """keys: (vk, kengaytirilgan) juftliklari. Hammasi bosiladi, keyin teskari tartibda qo'yib yuboriladi."""
+    for vk, ext in keys:
+        _key(vk, False, ext)
+    for vk, ext in reversed(keys):
+        _key(vk, True, ext)
+
+
+def media(action):
+    """Keyingi / oldingi trek."""
+    press_keys((0xB0 if action == "next" else 0xB1, False))
+
+
+def volume(direction, count=1):
+    """Ovozni oshirish (direction > 0) yoki kamaytirish."""
+    for _ in range(max(1, min(int(count), 10))):
+        press_keys((0xAF if direction > 0 else 0xAE, False))
+
+
+def desktop(direction):
+    """Virtual ish stolini almashtirish: Ctrl + Win + o'ng/chap strelka."""
+    press_keys((0x11, False), (0x5B, False), (0x27 if direction == "right" else 0x25, True))
+
+
+def zoom_wheel(amount):
+    """Ctrl bosilgan holda g'ildirak: ko'p dasturda masshtabni o'zgartiradi."""
+    _key(0x11)
+    wheel(amount)
+    _key(0x11, up=True)
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _RECT), ("rcWork", _RECT), ("dwFlags", ctypes.c_ulong)]
+
+
+def list_monitors():
+    """Ekranlar ro'yxati [(x, y, eni, balandligi)], asosiy ekran birinchi."""
+    mons = []
+    proc_t = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(_RECT), ctypes.c_void_p)
+
+    def cb(hmon, hdc, rect, data):
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        if ctypes.windll.user32.GetMonitorInfoW(ctypes.c_void_p(hmon), ctypes.byref(info)):
+            r = info.rcMonitor
+            mons.append((r.left, r.top, r.right - r.left, r.bottom - r.top, bool(info.dwFlags & 1)))
+        return 1
+
+    try:
+        ctypes.windll.user32.EnumDisplayMonitors(None, None, proc_t(cb), 0)
+    except Exception:
+        pass
+    mons.sort(key=lambda m: not m[4])
+    return [m[:4] for m in mons]
+
+
+def screen_geometry(n):
+    """n = 0: hamma ekranlar (virtual ish stoli); n >= 1: n-chi ekran (1 = asosiy). -> (x, y, eni, balandligi)"""
+    u = ctypes.windll.user32
+    if n <= 0:
+        return u.GetSystemMetrics(76), u.GetSystemMetrics(77), u.GetSystemMetrics(78), u.GetSystemMetrics(79)
+    mons = list_monitors()
+    if mons:
+        return mons[min(int(n), len(mons)) - 1]
+    return 0, 0, u.GetSystemMetrics(0), u.GetSystemMetrics(1)
+
+
+def dpi_aware():
+    """Kursor koordinatalari haqiqiy piksellarda bo'lishi uchun (Windows masshtabi 125%/150% bo'lsa ham)."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 def swipe(direction):
     """Qo'l o'ngga siltandi -> oldinga (Alt+O'ng), chapga -> orqaga (Alt+Chap)."""
     pyautogui.hotkey("alt", "right" if direction == "right" else "left")
@@ -260,7 +371,8 @@ def swipe(direction):
 
 class Hotkeys:
     """Hamma joyda ishlaydigan Ctrl+Alt+harf tugmalari (kamera oynasi yashirin bo'lsa ham)."""
-    KEYS = {"quit": 0x51, "hide": 0x48, "mini": 0x4D, "settings": 0x53, "calib": 0x4B}
+    KEYS = {"quit": 0x51, "hide": 0x48, "mini": 0x4D, "settings": 0x53, "calib": 0x4B,
+            "train": 0x54, "toggle": 0x20}
 
     def __init__(self):
         self.prev = {}
@@ -324,7 +436,7 @@ def thumb_out(lm):
 
 
 def classify(lm, pinching, fs=None):
-    """-> (gesture, pinching). gesture: drag / fist / scroll / left / double / right / move / none
+    """-> (gesture, pinching). gesture: drag / fist / scroll / three / shaka / love / double / two / move / none
     fs - barmoqlarning oldingi holati (gisterezis uchun, o'zgartiriladi)."""
     fs = fs if fs is not None else {}
     up = {n: finger_up(lm, n, fs.get(n)) for n in FINGER}
@@ -342,6 +454,11 @@ def classify(lm, pinching, fs=None):
         return "scroll", False
     if up["index"] and up["middle"] and up["ring"] and not up["pinky"]:
         return "three", False
+    to = thumb_out(lm)
+    if to and up["pinky"] and not up["index"] and not up["middle"] and not up["ring"]:
+        return "shaka", False             # telefon: bosh barmoq + jimjiloq
+    if to and up["index"] and up["pinky"] and not up["middle"] and not up["ring"]:
+        return "love", False              # "seni sevaman": bosh + ko'rsatkich + jimjiloq
     if up["index"] and up["pinky"] and not up["middle"] and not up["ring"]:
         return "double", False
     if count == 2 and up["index"] and up["middle"]:
@@ -392,11 +509,15 @@ class OneEuro:
 class Controller:
     """Ishorani aniqlab, kursor/bosish/scroll/sudrash/siltash amallarini bajaradi."""
 
-    def __init__(self, screen_w, screen_h, cursor_pos, io=None):
+    def __init__(self, screen_w, screen_h, cursor_pos, io=None, origin=(0, 0)):
         self.sw, self.sh = screen_w, screen_h
-        self.cur_x, self.cur_y = cursor_pos
+        self.ox, self.oy = origin             # tanlangan ekranning chap-yuqori burchagi (ko'p ekranli kompyuterda)
+        self.cur_x, self.cur_y = cursor_pos[0] - self.ox, cursor_pos[1] - self.oy
         self.io = io or {"cursor": set_cursor, "click": click, "wheel": wheel, "down": mouse_down,
-                         "up": mouse_up, "double": double_click, "swipe": swipe}
+                         "up": mouse_up, "double": double_click, "swipe": swipe, "media": media,
+                         "volume": volume, "desktop": desktop, "zoom": zoom_wheel}
+        self.on_event = None              # ovoz va boshqalar uchun: on_event("click") ...
+        self.pl = None                    # oxirgi kadrdagi silliqlangan nuqtalar (ishora tanish uchun ishlatilgan)
         self.history = deque(maxlen=5)    # kursorning oxirgi joylari (bosishdagi siljishni qaytarish uchun)
         self.swipe_hist = deque()
         self.filter = OneEuro(CURSOR_MIN_CUTOFF, CURSOR_BETA)
@@ -412,6 +533,7 @@ class Controller:
         self.aspect = 16 / 9               # kadr eni / balandligi (asosiy sikl yangilab turadi)
         self.size_now = None               # qo'lning hozirgi o'lchami
         self.size_ema = None
+        self.vol_y = None
         self.reset()
 
     # ----- holatni tozalash
@@ -423,6 +545,7 @@ class Controller:
         self.candidate, self.streak, self.confirmed = "none", 0, "none"
         self.scroll_y = None
         self.scroll_acc = 0.0
+        self.vol_y = None
         self.lost = 0
         self.fist_start, self.fist_progress = None, 0.0
         self.enable_start, self.enable_progress = None, 0.0
@@ -437,14 +560,46 @@ class Controller:
         self.dragging = False
         self.drag_off = (0.0, 0.0)
 
+    def _ev(self, name):
+        if self.on_event:
+            try:
+                self.on_event(name)
+            except Exception:
+                pass
+
+    def _put(self, x, y):
+        """Kursorni tanlangan ekran ichidagi (x, y) nuqtaga qo'yadi."""
+        self.io["cursor"](x + self.ox, y + self.oy)
+
+    def set_screen(self, ox, oy, w, h):
+        """Boshqariladigan ekranni almashtiradi (sozlamalarda 'Ekran' o'zgartirilganda)."""
+        if (ox, oy, w, h) == (self.ox, self.oy, self.sw, self.sh):
+            return
+        self.ox, self.oy, self.sw, self.sh = ox, oy, w, h
+        self.cur_x = min(max(self.cur_x, 0), w - 1)
+        self.cur_y = min(max(self.cur_y, 0), h - 1)
+        self.filter.prev = None
+        self.rel_prev = None
+
+    def hold(self, now):
+        """Qo'l ko'rinib turibdi, lekin boshqa vazifa (masalan, kattalashtirish) bilan band."""
+        self.lost = 0
+        self.last_seen = now
+
     def disable(self):
+        was = self.enabled
         self.enabled = False
         self.reset()
+        if was:
+            self._ev("disable")
 
-    def enable(self, now):
+    def enable(self, now, silent=False):
+        was = self.enabled
         self.enabled = True
         self.reset()
         self.last_seen = now
+        if not was and not silent:
+            self._ev("enable")
 
     def no_hand(self, now=None):
         now = time.time() if now is None else now
@@ -482,7 +637,8 @@ class Controller:
         self.size_now = hand_size(lm, self.aspect)
         self.size_ema = self.size_now if self.size_ema is None else \
             self.size_ema + (self.size_now - self.size_ema) * SIZE_SMOOTH
-        gesture, self.pinching = classify(self._smooth_lm(world or lm), self.pinching, self.fs)
+        self.pl = self._smooth_lm(world or lm)
+        gesture, self.pinching = classify(self.pl, self.pinching, self.fs)
 
         if not self.enabled:
             self._enable_check(lm, gesture, now)
@@ -494,10 +650,14 @@ class Controller:
             self.candidate, self.streak = gesture, 1
 
         need = {"move": 1, "three": THREE_FRAMES, "two": TWO_FRAMES, "double": DOUBLE_FRAMES,
-                "drag": DRAG_FRAMES, "scroll": SCROLL_FRAMES}.get(self.candidate, 2)
+                "drag": DRAG_FRAMES, "scroll": SCROLL_FRAMES, "shaka": SHAKA_FRAMES,
+                "love": LOVE_FRAMES}.get(self.candidate, 2)
         if self.streak >= need:
             prev, self.confirmed = self.confirmed, self.candidate
-            self._fist_check(now)
+            if self.paused:                   # kalibrovka/o'rgatish paytida mush dasturni o'chirmaydi
+                self.fist_start, self.fist_progress = None, 0.0
+            else:
+                self._fist_check(now)
             if not self.enabled:
                 return "off"
             if prev == "drag" and self.confirmed != "drag":
@@ -513,9 +673,20 @@ class Controller:
                 self._click(self.confirmed, now)
             elif self.confirmed == "scroll":
                 self._scroll(lm[9].y, prev != "scroll", now)
-                self._swipe(lm[9].x, lm[9].y, now)
+                if SWIPE_ENABLED:
+                    d = self._swipe_dir(lm[9].x, lm[9].y, now)
+                    if d:
+                        self.io["swipe"](d)
+                        self._ev("swipe")
+            elif self.confirmed == "shaka" and MEDIA_ENABLED:
+                self._shaka(lm, now, prev != "shaka")
+            elif self.confirmed == "love" and MEDIA_ENABLED:
+                self._love(lm, now, prev != "love")
         if self.confirmed != "scroll":
             self.scroll_y = None
+        if self.confirmed != "shaka":
+            self.vol_y = None
+        if self.confirmed not in ("scroll", "shaka", "love"):
             self.swipe_hist.clear()
         return self.status
 
@@ -547,11 +718,13 @@ class Controller:
     def _click(self, kind, now):
         if self.history:                  # ishora boshlanishidan oldingi joyga qaytamiz
             self.cur_x, self.cur_y = self.history[0]
-            self.io["cursor"](self.cur_x, self.cur_y)
+            self._put(self.cur_x, self.cur_y)
         if kind == "double":
             self.io["double"]()
+            self._ev("double")
         else:
             self.io["click"](click_button(kind))
+            self._ev("click")
         self.last_click = now
 
     # ----- kursor
@@ -596,7 +769,7 @@ class Controller:
             if first:
                 self.filter.prime(self.cur_x, self.cur_y, now)
             self.cur_x, self.cur_y = self.filter(tx, ty, now)
-        self.io["cursor"](self.cur_x, self.cur_y)
+        self._put(self.cur_x, self.cur_y)
 
     def _move(self, lm, now, first):
         tx, ty = self._target(lm)
@@ -608,11 +781,12 @@ class Controller:
         if first:
             if self.history:              # barmoqlar tekkunga qadar bo'lgan joyni bosamiz
                 self.cur_x, self.cur_y = self.history[0]
-                self.io["cursor"](self.cur_x, self.cur_y)
+                self._put(self.cur_x, self.cur_y)
             self.drag_off = (self.cur_x - tx, self.cur_y - ty)
             self._pointer(tx + self.drag_off[0], ty + self.drag_off[1], now, True)
             self.io["down"]()
             self.dragging = True
+            self._ev("drag")
             return
         self._pointer(tx + self.drag_off[0], ty + self.drag_off[1], now, False)
 
@@ -632,9 +806,8 @@ class Controller:
             self.io["wheel"](amount)
             self.scroll_acc -= amount
 
-    def _swipe(self, x, y, now):
-        if not SWIPE_ENABLED:
-            return
+    def _swipe_dir(self, x, y, now):
+        """Qo'l tez yon tomonga siltandimi? -> "right" / "left" / None."""
         h = self.swipe_hist
         h.append((now, x, y))
         while h and now - h[0][0] > SWIPE_WINDOW:
@@ -642,11 +815,41 @@ class Controller:
         if len(h) >= 3 and now - self.last_swipe > SWIPE_COOLDOWN:
             dx, dy = h[-1][1] - h[0][1], abs(h[-1][2] - h[0][2])
             if abs(dx) > SWIPE_DIST and dy < abs(dx) * 0.6:
-                self.io["swipe"]("right" if dx > 0 else "left")
                 self.last_swipe = now
                 self.block_scroll_until = now + 0.6
                 self.scroll_acc = 0.0
                 h.clear()
+                return "right" if dx > 0 else "left"
+        return None
+
+    def _shaka(self, lm, now, first):
+        """Telefon ishorasi: tepaga/pastga = ovoz, yon tomonga siltash = keyingi/oldingi trek."""
+        if first:
+            self.swipe_hist.clear()
+            self.vol_y = None
+        d = self._swipe_dir(lm[9].x, lm[9].y, now)
+        if d:
+            self.io["media"]("next" if d == "right" else "prev")
+            self._ev("media")
+            self.vol_y = None
+            return
+        y = lm[9].y
+        if self.vol_y is None or now < self.block_scroll_until:
+            self.vol_y = y
+            return
+        steps = int((self.vol_y - y) / VOLUME_STEP)        # qo'l ko'tarilsa musbat -> ovoz oshadi
+        if steps:
+            self.io["volume"](1 if steps > 0 else -1, abs(steps))
+            self.vol_y -= steps * VOLUME_STEP
+
+    def _love(self, lm, now, first):
+        """"Seni sevaman" ishorasi + yon tomonga siltash = virtual ish stolini almashtirish."""
+        if first:
+            self.swipe_hist.clear()
+        d = self._swipe_dir(lm[9].x, lm[9].y, now)
+        if d:
+            self.io["desktop"](d)
+            self._ev("desktop")
 
 
 # ---------------------------------------------------------------- kalibrovka
@@ -705,6 +908,197 @@ class Calibrator:
         return True
 
 
+# ---------------------------------------------------------------- ikki qo'l bilan kattalashtirish
+class Zoomer:
+    """Ikkala qo'l ochiq bo'lib uzoqlashsa/yaqinlashsa Ctrl + g'ildirak yuboradi (masshtabni o'zgartirish)."""
+    STABLE = 4          # ikkala qo'l shuncha kadr ochiq turgandan keyin boshlanadi
+    GRACE = 4           # qo'llardan biri shuncha kadr ko'rinmasa ham davom etadi
+
+    def __init__(self, io):
+        self.io = io
+        self.active = False
+        self.reset()
+
+    def reset(self):
+        self.active, self.prev, self.acc, self.stable, self.miss = False, None, 0.0, 0, 0
+
+    @staticmethod
+    def hand_open(lm):
+        mid = (UP_ON + UP_OFF) / 2
+        return all(finger_score(lm, n) >= mid for n in FINGER)
+
+    def update(self, pair, aspect):
+        """pair: ikkita qo'l nuqtalari yoki None. Hozir kattalashtirish rejimidami (True/False)?"""
+        if pair is None or not (self.hand_open(pair[0]) and self.hand_open(pair[1])):
+            self.miss += 1
+            self.stable = 0
+            if self.miss > self.GRACE:
+                self.reset()
+            return self.active
+        self.miss = 0
+        a, b = pair[0][9], pair[1][9]
+        d = (((a.x - b.x) * aspect) ** 2 + (a.y - b.y) ** 2) ** 0.5
+        self.stable += 1
+        if self.stable < self.STABLE:
+            self.prev = d
+            return self.active
+        if not self.active:
+            self.active, self.prev, self.acc = True, d, 0.0
+            return True
+        self.acc += (d - self.prev) * ZOOM_GAIN
+        self.prev = d
+        amount = int(self.acc / WHEEL_NOTCH) * WHEEL_NOTCH
+        if amount:
+            self.io["zoom"](amount)
+            self.acc -= amount
+        return True
+
+
+# ---------------------------------------------------------------- ishoralarni o'rgatish
+class Trainer:
+    """Ochiq kaft va mushtni ko'rsatib, barmoq ochiq/yopiq chegaralarini sizning qo'lingizga moslaydi."""
+
+    def __init__(self):
+        self.phase, self.samples, self.pause_until = 0, [], None
+        self.open_min = None
+        self.result, self.error = None, ""
+
+    @property
+    def progress(self):
+        return min(len(self.samples) / TRAIN_FRAMES, 1.0)
+
+    def prompt(self):
+        if self.pause_until is not None:
+            return "Yaxshi! Endi tayyorlaning..."
+        if self.phase == 0:
+            return "O'RGATISH 1/2: kaftni TO'LIQ oching (barmoqlar tik) va ushlab turing"
+        return "O'RGATISH 2/2: MUSHT qiling (hamma barmoqni mahkam yuming) va ushlab turing"
+
+    def feed(self, lm, now):
+        """lm: ishora tanishda ishlatilgan nuqtalar yoki None. Tugaganda True qaytaradi (natija self.result da)."""
+        if lm is None:
+            self.samples = []
+            return False
+        if self.pause_until is not None:
+            if now < self.pause_until:
+                return False
+            self.pause_until = None
+        scores = [finger_score(lm, n) for n in FINGER]
+        self.samples.append(min(scores) if self.phase == 0 else max(scores))
+        if len(self.samples) < TRAIN_FRAMES:
+            return False
+        med = sorted(self.samples)[len(self.samples) // 2]
+        self.samples = []
+        if self.phase == 0:
+            self.open_min, self.phase, self.pause_until = med, 1, now + 1.5
+            return False
+        d = self.open_min - med
+        if d < 40:
+            self.error = "Ochiq va yopiq qo'l deyarli farq qilmadi, qayta urinib ko'ring."
+            self.phase, self.open_min = 0, None
+            return False
+        on = min(med + 0.7 * d, self.open_min - 5)
+        off = max(min(med + 0.4 * d, on - 10), med + 5)
+        self.result, self.error = (round(on, 1), round(off, 1)), ""
+        return True
+
+
+# ---------------------------------------------------------------- qo'lni topish (kesish, yoritish, zaxira)
+def crop_window(box, w, h, pad):
+    """Qo'l atrofidagi kvadrat oyna (x, y, tomon) piksellarda; kadr ichida qoladi."""
+    cx, cy = (box[0] + box[2]) / 2 * w, (box[1] + box[3]) / 2 * h
+    side = max((box[2] - box[0]) * w, (box[3] - box[1]) * h) * pad
+    side = int(min(max(side, 160), h, w))
+    x = int(min(max(cx - side / 2, 0), w - side))
+    y = int(min(max(cy - side / 2, 0), h - side))
+    return x, y, side
+
+
+def remap(lms, x, y, side, w, h):
+    """Kesilgan oyna ichidagi nuqtalarni butun kadr koordinatalariga qaytaradi."""
+    return [Pt((x + p.x * side) / w, (y + p.y * side) / h, p.z) for p in lms]
+
+
+class Detector:
+    """Qo'lni topadi: uzoqdagi kichik qo'lni kesib kattalashtirib, qorong'i kadrni yoritib, yo'qolsa zaxira usul bilan."""
+
+    def __init__(self, full, crop, rescue, clahe=None):
+        self.full, self.crop, self.rescue = full, crop, rescue
+        self.clahe = clahe or cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        self.idx, self.box, self.n_last, self.last_wrist = 0, None, 0, None
+        self.mode, self.gamma, self.luts = "full", 1.0, {}
+        self.t0, self.last_ts = time.time(), -1
+
+    def _brighten(self, frame):
+        self.gamma = 1.0
+        if not LOW_LIGHT:
+            return frame
+        mean = float(frame[::6, ::6].mean())
+        if mean >= LOW_LIGHT_LEVEL:
+            return frame
+        g = max(0.35, math.log(110 / 255) / math.log(max(mean, 1.0) / 255))
+        key = round(g, 2)
+        if key not in self.luts:
+            self.luts[key] = np.array([((i / 255.0) ** key) * 255 for i in range(256)], dtype=np.uint8)
+        self.gamma = key
+        return cv2.LUT(frame, self.luts[key])
+
+    @staticmethod
+    def _img(rgb):
+        return mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb))
+
+    def detect(self, frame):
+        """frame: BGR kadr. -> (hands, worlds): qo'llar ro'yxati (asosiy qo'l birinchi), worlds yoki None."""
+        self.idx += 1
+        src = self._brighten(frame)
+        rgb = cv2.cvtColor(src, cv2.COLOR_BGR2RGB)
+        h, w = rgb.shape[:2]
+        hands, worlds, self.mode = [], None, "full"
+
+        small = self.box is not None and (self.box[3] - self.box[1]) < ROI_MAX_HAND
+        if ROI_ENABLED and small and self.n_last == 1 and self.idx % 4:
+            x, y, side = crop_window(self.box, w, h, ROI_PAD)
+            piece = rgb[y:y + side, x:x + side]
+            if side < 384:
+                piece = cv2.resize(piece, (384, 384), interpolation=cv2.INTER_LINEAR)
+            res = self.crop.detect(self._img(piece))
+            if res.hand_landmarks:
+                hands = [remap(res.hand_landmarks[0], x, y, side, w, h)]
+                worlds = getattr(res, "hand_world_landmarks", None)
+                self.mode = "kesilgan"
+        if not hands:
+            ts = max(int((time.time() - self.t0) * 1000), self.last_ts + 1)
+            self.last_ts = ts
+            res = self.full.detect_for_video(self._img(rgb), ts)
+            hands, worlds = res.hand_landmarks, getattr(res, "hand_world_landmarks", None)
+        if not hands:                                    # qo'l yo'qoldi -> zaxira usuli (kontrastni oshirish)
+            lab = cv2.cvtColor(src, cv2.COLOR_BGR2LAB)
+            lab[:, :, 0] = self.clahe.apply(lab[:, :, 0])
+            boosted = cv2.cvtColor(cv2.cvtColor(lab, cv2.COLOR_LAB2BGR), cv2.COLOR_BGR2RGB)
+            res = self.rescue.detect(self._img(boosted))
+            hands, worlds = res.hand_landmarks, getattr(res, "hand_world_landmarks", None)
+            self.mode = "zaxira"
+        return self._finish(hands, worlds)
+
+    def _finish(self, hands, worlds):
+        hands = list(hands) if hands else []
+        worlds = list(worlds) if worlds else None
+        if len(hands) > 1 and self.last_wrist:           # asosiy qo'l: oldingi joyga eng yaqini
+            lw = self.last_wrist
+            order = sorted(range(len(hands)), key=lambda i: (hands[i][0].x - lw[0]) ** 2 + (hands[i][0].y - lw[1]) ** 2)
+            hands = [hands[i] for i in order]
+            if worlds and len(worlds) == len(order):
+                worlds = [worlds[i] for i in order]
+        if hands:
+            xs, ys = [p.x for p in hands[0]], [p.y for p in hands[0]]
+            self.box = (min(xs), min(ys), max(xs), max(ys))
+            self.last_wrist = (hands[0][0].x, hands[0][0].y)
+        else:
+            self.box = None
+        self.n_last = len(hands)
+        return hands, worlds
+
+
 # ---------------------------------------------------------------- asosiy sikl
 FINGER_STYLE = {   # (rang BGR, nomi, uchi nuqtasi, hamma bo'g'imlari)
     "thumb": ((0, 165, 255), "Bosh", 4, (1, 2, 3, 4)),
@@ -752,6 +1146,8 @@ LABELS = {"move": "1 barmoq: HARAKAT", "two": "2 barmoq: CHAP TUGMA", "three": "
           "scroll": "OCHIQ KAFT: SCROLL / yon tomonga siltash",
           "drag": "TEKKIZISH: SUDRASH", "fist": "MUSHT: ushlab turing (o'chirish)...",
           "double": "ROK ISHORA: IKKI MARTA BOSISH", "none": "Qo'l yo'q / noma'lum",
+          "shaka": "TELEFON: tepaga/pastga = OVOZ, yon tomonga = TREK",
+          "love": "SENI SEVAMAN: yon tomonga siltash = ISH STOLI",
           "off": "O'CHIRILGAN - yoqish: kaftni TO'LIQ oching va ushlab turing"}
 
 
@@ -772,40 +1168,52 @@ def main():
         print("Windows bilan birga yoqilish:", "YOQILDI" if args.avtoyoqish else "O'CHIRILDI")
         return
 
+    dpi_aware()
     settings = sozlamalar.Settings()
     settings.apply(globals())
     ensure_model()
-    options = vision.HandLandmarkerOptions(
+    landmarker = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
         base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
         running_mode=vision.RunningMode.VIDEO,
-        num_hands=1,
+        num_hands=2,                                     # ikkinchi qo'l kattalashtirish ishorasi uchun
         min_hand_detection_confidence=0.3,
         min_hand_presence_confidence=0.3,
         min_tracking_confidence=0.3,
-    )
-    landmarker = vision.HandLandmarker.create_from_options(options)
-    # zaxira detektor: asosiysi qo'lni yo'qotsa, kontrasti oshirilgan kadrda har safar noldan qidiradi
-    rescue = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
-        base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
-        running_mode=vision.RunningMode.IMAGE,
-        num_hands=1,
-        min_hand_detection_confidence=0.25,
-        min_hand_presence_confidence=0.25,
     ))
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    image_opts = dict(base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
+                      running_mode=vision.RunningMode.IMAGE, num_hands=1)
+    crop_lm = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
+        min_hand_detection_confidence=0.3, min_hand_presence_confidence=0.3, **image_opts))
+    rescue = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
+        min_hand_detection_confidence=0.25, min_hand_presence_confidence=0.25, **image_opts))
+    detector = Detector(landmarker, crop_lm, rescue)
 
     cam = LatestFrame(CAM_INDEX)
-    ctrl = Controller(*pyautogui.size(), pyautogui.position())
+    try:
+        geom = screen_geometry(MONITOR)
+    except Exception:
+        geom = (0, 0) + tuple(pyautogui.size())
+    ctrl = Controller(geom[2], geom[3], pyautogui.position(), origin=geom[:2])
+    zoomer = Zoomer(ctrl.io)
+    sound = sozlamalar.Sound()
+    ctrl.on_event = sound.play
     atexit.register(ctrl.release)        # xato bilan yopilsa ham sichqoncha tugmasi bosilgan holda qolmasin
     hotkeys = Hotkeys()
-    state = {"hidden": args.yashirin, "mini": False, "calib": None, "win": None, "size": None, "names": True}
+    state = {"hidden": args.yashirin, "mini": False, "calib": None, "train": None, "win": None, "size": None,
+             "names": True, "ui": None}
+    pending = []                         # tray menyusidan keladigan buyruqlar
 
     def on_settings_change():
         settings.apply(globals())
+        try:
+            ctrl.set_screen(*screen_geometry(MONITOR))
+        except Exception:
+            pass
+        state["ui"] = None               # belgi qayta chizilsin
 
     def start_calibration():
-        ctrl.enable(time.time())
-        ctrl.paused = True
+        ctrl.enable(time.time(), silent=True)
+        ctrl.paused, state["train"] = True, None
         state["calib"] = Calibrator()
         state["hidden"] = False
 
@@ -814,15 +1222,28 @@ def main():
         settings.save()
         settings.apply(globals())
 
+    def start_training():
+        ctrl.enable(time.time(), silent=True)
+        ctrl.paused, state["calib"] = True, None
+        state["train"] = Trainer()
+        state["hidden"] = False
+
+    def clear_training():
+        settings.train = None
+        settings.save()
+        settings.apply(globals())
+
     panel = None
     if sozlamalar.tk is not None:
         try:
-            panel = sozlamalar.Panel(settings, on_settings_change, start_calibration, clear_calibration)
+            panel = sozlamalar.Panel(settings, on_settings_change, start_calibration, clear_calibration,
+                                     start_training, clear_training)
         except Exception as e:                       # Tk ishlamasa ham asosiy dastur ishlayveradi
             print("Sozlamalar oynasi ochilmadi:", e)
-
-    t0 = time.time()
-    last_ts = -1
+    tray = None
+    if TRAY_ENABLED and sozlamalar.HAS_TRAY:
+        tray = sozlamalar.Tray(pending.append)
+        tray.start()
 
     def sync_window():
         """Kamera oynasini holatga (yashirin/ko'rinadigan/o'lcham) moslaydi."""
@@ -839,22 +1260,19 @@ def main():
             cv2.resizeWindow(WINDOW, want_w, int(want_w * cam.size[1] / cam.size[0]))
             state["size"] = want_w
 
+    keymap = {ord("h"): "hide", ord("m"): "mini", ord("s"): "settings", ord("k"): "calib",
+              ord("t"): "train", ord("l"): "names"}
+    was_zooming = False
     running = True
     while running:
         events = hotkeys.poll()
+        while pending:
+            events.append(pending.pop(0))
         key = cv2.waitKey(1) & 0xFF
         if key in (ord("q"), 27):
             events.append("quit")
-        elif key == ord("h"):
-            events.append("hide")
-        elif key == ord("m"):
-            events.append("mini")
-        elif key == ord("s"):
-            events.append("settings")
-        elif key == ord("k"):
-            events.append("calib")
-        elif key == ord("l"):
-            events.append("names")
+        elif key in keymap:
+            events.append(keymap[key])
         for ev in events:
             if ev == "quit":
                 running = False
@@ -866,13 +1284,24 @@ def main():
                 state["mini"] = not state["mini"]
             elif ev == "settings" and panel:
                 panel.show()
+            elif ev == "toggle":
+                if ctrl.enabled:
+                    ctrl.disable()
+                else:
+                    ctrl.enable(time.time())
             elif ev == "calib":
                 if state["calib"]:
                     state["calib"], ctrl.paused = None, False     # bekor qilish
                 else:
                     start_calibration()
+            elif ev == "train":
+                if state["train"]:
+                    state["train"], ctrl.paused = None, False
+                else:
+                    start_training()
         if not running:
             break
+        sound.enabled = SOUND_ENABLED
         if panel:
             panel.pump()
         sync_window()
@@ -886,37 +1315,59 @@ def main():
         frame = cv2.flip(frame, 1)
         h, w = frame.shape[:2]
         ctrl.aspect = w / h
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        ts = max(int((time.time() - t0) * 1000), last_ts + 1)
-        last_ts = ts
-        result = landmarker.detect_for_video(
-            mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ts)
+        now = time.time()
+        hands, worlds = detector.detect(frame)
 
-        hands = result.hand_landmarks
-        worlds = getattr(result, "hand_world_landmarks", None)
-        if not hands:                                    # qo'l yo'qoldi -> zaxira usuli
-            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-            lab[:, :, 0] = clahe.apply(lab[:, :, 0])
-            boosted = cv2.cvtColor(cv2.cvtColor(lab, cv2.COLOR_LAB2BGR), cv2.COLOR_BGR2RGB)
-            res2 = rescue.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=boosted))
-            hands, worlds = res2.hand_landmarks, getattr(res2, "hand_world_landmarks", None)
+        # ---- ikki qo'l bilan kattalashtirish
+        pair = hands[:2] if (ZOOM_ENABLED and len(hands) >= 2) else None
+        zooming = zoomer.update(pair, ctrl.aspect) if ZOOM_ENABLED else False
+        if not ZOOM_ENABLED:
+            zoomer.reset()
+        if zooming and not was_zooming:
+            ctrl.reset()
+        was_zooming = zooming
 
-        cal = state["calib"]
+        cal, train = state["calib"], state["train"]
         if hands:
             lm = hands[0]
-            ctrl.update(lm, world=worlds[0] if worlds else None)
+            if zooming:
+                ctrl.hold(now)
+            else:
+                ctrl.update(lm, now, world=worlds[0] if worlds else None)
             if cal and cal.feed(lm, ctrl.confirmed, ctrl.size_now):
                 settings.calib = cal.result
                 settings.save()
                 settings.apply(globals())
                 state["calib"], ctrl.paused = None, False
-            cal = state["calib"]                   # tugagan bo'lsa chizishda ishlatilmasin
+                sound.play("done")
+            if train and train.feed(ctrl.pl, now):
+                settings.train = train.result
+                settings.save()
+                settings.apply(globals())
+                state["train"], ctrl.paused = None, False
+                sound.play("done")
+            cal, train = state["calib"], state["train"]       # tugagan bo'lsa chizishda ishlatilmasin
             if not state["hidden"]:
                 draw_hand(frame, lm, ctrl, state["names"])
+                if len(hands) > 1:                              # ikkinchi qo'l: oddiy skelet
+                    pts2 = [(int(p.x * w), int(p.y * h)) for p in hands[1]]
+                    for a_, b_ in CONNECTIONS:
+                        cv2.line(frame, pts2[a_], pts2[b_], (200, 120, 255), 2)
         else:
-            ctrl.no_hand()
+            ctrl.no_hand(now)
             if cal:
                 cal.feed(None, "none")
+            if train:
+                train.feed(None, now)
+
+        # ---- ekrandagi belgi va tray rangi
+        ui = "paused" if ctrl.paused else ctrl.status
+        if ui != state["ui"]:
+            state["ui"] = ui
+            if panel:
+                panel.set_status(ui, OVERLAY_ENABLED)
+            if tray:
+                tray.set_color(sozlamalar.STATUS_COLOR.get(ui, sozlamalar.STATUS_COLOR["none"]))
 
         if state["hidden"]:
             continue
@@ -943,7 +1394,9 @@ def main():
             cv2.rectangle(frame, (10, y0b), (10 + int(bw * prog), y1b), pcol, -1)
             cv2.rectangle(frame, (10, y0b), (10 + bw, y1b), (255, 255, 255), 1)
         color = (0, 0, 255) if status == "off" else (0, 255, 255)
-        if status in ("two", "three"):
+        if zooming:
+            label = "IKKI QO'L: KATTALASHTIRISH (uzoqlashtiring / yaqinlashtiring)"
+        elif status in ("two", "three"):
             label = f"{'2' if status == 'two' else '3'} barmoq: " + \
                     ("CHAP" if click_button(status) == "left" else "O'NG") + " TUGMA"
         else:
@@ -964,19 +1417,46 @@ def main():
             cv2.putText(frame, msg, (10, int(h * 0.5)), font, 0.55 * k, (0, 255, 0), max(1, int(1.5 * k)))
             if cal.error:
                 cv2.putText(frame, cal.error, (10, int(h * 0.56)), font, 0.55 * k, (0, 0, 255), 2)
+        if train:
+            cv2.putText(frame, train.prompt(), (10, int(h * 0.5)), font, 0.6 * k, (0, 255, 0), max(1, int(1.5 * k)))
+            bw = int(300 * k)
+            cv2.rectangle(frame, (10, int(h * 0.54)), (10 + int(bw * train.progress), int(h * 0.54) + int(14 * k)),
+                          (0, 255, 255), -1)
+            cv2.rectangle(frame, (10, int(h * 0.54)), (10 + bw, int(h * 0.54) + int(14 * k)), (255, 255, 255), 1)
+            if train.error:
+                cv2.putText(frame, train.error, (10, int(h * 0.62)), font, 0.55 * k, (0, 0, 255), 2)
 
-        cv2.putText(frame, f"barmoqlar: {DEBUG['up']}  tekkizish: {DEBUG['pinch']:.2f}   "
-                           f"q-chiqish h-yashirish m-kichik s-sozlamalar k-kalibrovka l-nomlar (Ctrl+Alt+harf)",
+        extra = f"  aniqlash: {detector.mode}" + (f" (yoritish x{detector.gamma})" if detector.gamma != 1.0 else "")
+        cv2.putText(frame, f"barmoqlar: {DEBUG['up']}  tekkizish: {DEBUG['pinch']:.2f}{extra}   "
+                           f"q h m s k t l (Ctrl+Alt+harf, Probel = yoqish/o'chirish)",
                     (10, h - int(12 * k)), font, 0.42 * k, (255, 255, 255), 1)
         cv2.imshow(WINDOW, frame)
         state["shown"] = True
 
     ctrl.release()                       # sudrash paytida chiqilsa, tugma bosilgan holda qolmasin
+    if tray:
+        tray.stop()
     cam.release()
     cv2.destroyAllWindows()
     landmarker.close()
+    crop_lm.close()
     rescue.close()
 
 
+def run():
+    """Dasturni ishga tushiradi; kutilmagan xato bo'lsa xato.log fayliga yozadi (.exe da konsol yo'q)."""
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        try:
+            with open(os.path.join(sozlamalar.APP_DIR, "xato.log"), "a", encoding="utf-8") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n" + traceback.format_exc() + "\n")
+        except OSError:
+            pass
+        raise
+
+
 if __name__ == "__main__":
-    main()
+    run()

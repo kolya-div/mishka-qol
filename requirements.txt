@@ -1,3 +1,5 @@
-# opencv (cv2) mediapipe bilan birga avtomatik o'rnatiladi (opencv-contrib-python)
+# opencv (cv2) va numpy mediapipe bilan birga avtomatik o'rnatiladi
 mediapipe==1.2.3
 pyautogui==0.9.54
+pystray>=0.19.5
+pillow
